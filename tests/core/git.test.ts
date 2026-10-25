@@ -1,0 +1,87 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { addWorktree, listWorktrees, parseWorktrees, removeWorktree } from "../../src/core/git.ts";
+
+function git(cwd: string, ...args: string[]) {
+  return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+async function fixture(t: { after(fn: () => Promise<void>): void }) {
+  const root = await mkdtemp(join(tmpdir(), "pi-worktree-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repo = join(root, "repo");
+  await mkdir(repo);
+  git(repo, "init", "-b", "main");
+  git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "initial");
+  return { root, repo };
+}
+
+test("NUL parser preserves unusual paths and worktree metadata", () => {
+  assert.deepEqual(parseWorktrees("worktree /tmp/a\n b\0HEAD abc123\0branch refs/heads/feature/a\0locked reason\0\0worktree /tmp/detached\0HEAD def456\0detached\0prunable missing directory\0\0worktree /tmp/bare\0bare\0\0"), [
+    { path: "/tmp/a\n b", head: "abc123", branch: "feature/a", locked: "reason" },
+    { path: "/tmp/detached", head: "def456", detached: true, prunable: "missing directory" },
+    { path: "/tmp/bare", bare: true },
+  ]);
+  assert.equal(parseWorktrees("worktree /x\0locked\0\0")[0].locked, "");
+});
+
+test("create new/existing branches, list and remove while preserving branches", async (t) => {
+  const { repo, root } = await fixture(t);
+  const path = await addWorktree(repo, join(root, "space and 中文\nworktree"), "feature/new", true);
+  assert.equal((await listWorktrees(repo))[1].path, path);
+  assert.equal((await listWorktrees(repo))[1].branch, "feature/new");
+  await removeWorktree(repo, path);
+  assert.equal((await listWorktrees(repo)).length, 1);
+  git(repo, "show-ref", "--verify", "refs/heads/feature/new");
+  await addWorktree(repo, path, "feature/new");
+  await removeWorktree(repo, path);
+});
+
+test("protect primary, current/subdirectory/symlink, locked and dirty worktrees", async (t) => {
+  const { repo, root } = await fixture(t);
+  const path = await addWorktree(repo, join(root, "linked"), "feature/safe", true);
+  await assert.rejects(removeWorktree(repo, repo), /主工作区/);
+  await assert.rejects(removeWorktree(path, path), /当前 pi/);
+  const sub = join(path, "sub");
+  await mkdir(sub);
+  await assert.rejects(removeWorktree(sub, path), /当前 pi/);
+  const alias = join(root, "alias");
+  await symlink(sub, alias, "dir");
+  await assert.rejects(removeWorktree(alias, path), /当前 pi/);
+  await rm(sub, { recursive: true });
+  git(repo, "worktree", "lock", path);
+  await assert.rejects(removeWorktree(repo, path), /锁定/);
+  git(repo, "worktree", "unlock", path);
+  await writeFile(join(path, "untracked.txt"), "keep me");
+  await assert.rejects(removeWorktree(repo, path));
+  assert.equal(await readFile(join(path, "untracked.txt"), "utf8"), "keep me");
+  git(path, "add", "untracked.txt");
+  await assert.rejects(removeWorktree(repo, path));
+  assert.equal(await readFile(join(path, "untracked.txt"), "utf8"), "keep me");
+  await assert.rejects(removeWorktree(repo, root), /不是当前仓库/);
+});
+
+test("reject invalid inputs and refuse branch resets or tag-only checkouts", async (t) => {
+  const { repo, root } = await fixture(t);
+  const path = join(root, "target");
+  await assert.rejects(addWorktree(repo, " ", "feature/new", true), /不能为空/);
+  await assert.rejects(addWorktree(repo, path, "--force", true));
+  await assert.rejects(addWorktree(repo, path, "bad name", true));
+  await assert.rejects(addWorktree(repo, path, "main", true));
+  await assert.rejects(addWorktree(repo, path, "main"));
+  await assert.rejects(addWorktree(repo, path, "feature/new", true, "--help"));
+  git(repo, "tag", "tag-only");
+  await assert.rejects(addWorktree(repo, path, "tag-only"));
+  assert.equal((await listWorktrees(repo)).length, 1);
+});
+
+test("supports explicit start points and reports non-repository errors", async (t) => {
+  const { repo, root } = await fixture(t);
+  const path = await addWorktree(repo, join(root, "target"), "feature/base", true, "main");
+  assert.equal(git(path, "rev-parse", "HEAD"), git(repo, "rev-parse", "main"));
+  await assert.rejects(listWorktrees(root), /git repository/);
+});

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "hooks": {
+    "postToolUse": [
+      {
+        "command": "worktree-sync hook cursor"
+      }
+    ],
+    "stop": [
+      {
+        "command": "worktree-sync hook cursor"
+      }
+    ]
+  }
+}

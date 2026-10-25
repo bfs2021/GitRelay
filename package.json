@@ -1,0 +1,21 @@
+{
+  "name": "pi-git-worktree",
+  "version": "0.1.0",
+  "description": "Shared Git worktree change awareness for pi, Claude Code, Codex, Cursor and OpenCode",
+  "type": "module",
+  "keywords": ["pi-package", "git", "worktree", "coding-agent"],
+  "files": ["index.ts", "src", "dist", "scripts", "skills", "docs", "README.md"],
+  "pi": {
+    "extensions": ["./src/adapters/pi/index.ts"],
+    "skills": ["./skills/worktree-coordination"]
+  },
+  "bin": { "worktree-sync": "./dist/cli/main.js" },
+  "engines": { "node": ">=22.19.0" },
+  "peerDependencies": { "@earendil-works/pi-coding-agent": "*" },
+  "peerDependenciesMeta": { "@earendil-works/pi-coding-agent": { "optional": true } },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepare": "npm run build",
+    "test": "npm run build && node --experimental-strip-types --test tests/core/*.test.ts tests/adapters/*.test.ts tests/cli/*.test.ts"
+  }
+}
