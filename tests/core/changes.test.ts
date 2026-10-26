@@ -83,6 +83,18 @@ test("fast-forward through a second parent compares snapshots without replaying 
   assert.ok(!change!.patch.includes("already on main"));
 });
 
+test("failure to run Git is not acknowledged as a missing-history notification", async (t) => {
+  const f = await fixture(t);
+  const path = process.env.PATH;
+  try {
+    process.env.PATH = "";
+    await assert.rejects(inspectChange({ root: f.b, ref, commit: f.initial }, f.initial), /ENOENT/);
+  } finally {
+    if (path === undefined) delete process.env.PATH;
+    else process.env.PATH = path;
+  }
+});
+
 test("unusual paths use literal pathspecs and huge diff previews are bounded", async (t) => {
   const f = await fixture(t);
   const name = "[shared]* 中文\n.txt";

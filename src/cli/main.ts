@@ -9,13 +9,25 @@ import { collectGarbage } from "../core/cleanup.ts";
 import { runDaemon } from "../core/daemon.ts";
 import { daemonStatus } from "../core/daemon-state.ts";
 
-// write callbacks propagate failures; a broken pipe must not bypass lock cleanup.
+const abort = new AbortController();
+const stop = () => { abort.abort(); process.stdin.destroy(); };
+process.once("SIGINT", stop);
+process.once("SIGTERM", stop);
+
+// A broken or stalled pipe must not bypass lock cleanup or acknowledge undelivered data.
 process.stdout.on("error", () => {});
 
 async function output(value: object): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    process.stdout.write(`${JSON.stringify(value)}\n`, (error) => error ? reject(error) : resolve());
-  });
+  const written = Promise.withResolvers<void>();
+  const cancel = () => written.reject(abort.signal.reason);
+  abort.signal.addEventListener("abort", cancel, { once: true });
+  try {
+    abort.signal.throwIfAborted();
+    process.stdout.write(`${JSON.stringify(value)}\n`, (error) => error ? written.reject(error) : written.resolve());
+    await written.promise;
+  } finally {
+    abort.signal.removeEventListener("abort", cancel);
+  }
 }
 
 async function main() {
@@ -44,14 +56,22 @@ async function main() {
   if (command === "hook") {
     if (positionals.length !== 2 || !["claude-code", "codex", "cursor"].includes(agent)) throw new Error("Choose hook claude-code, codex or cursor.");
     let data = "";
+    let size = 0;
     process.stdin.setEncoding("utf8");
     for await (const chunk of process.stdin) {
-      data += chunk;
-      if (Buffer.byteLength(data) > 1024 * 1024) throw new Error("Hook input exceeds 1 MiB.");
+      size += Buffer.byteLength(chunk);
+      if (size <= 16 * 1024 * 1024) data += chunk;
+      else data = "";
+    }
+    abort.signal.throwIfAborted();
+    if (size > 16 * 1024 * 1024) {
+      process.stderr.write("worktree-sync: Hook input exceeds 16 MiB; skipped without acknowledging events. The next hook can retry.\n");
+      await output({});
+      return;
     }
     const input = JSON.parse(data);
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Hook input must be a JSON object.");
-    await runHook(agent as HookAgent, input, values.ref, output);
+    await runHook(agent as HookAgent, input, values.ref, output, abort.signal);
     return;
   }
   if (command === "daemon" && agent === "status" && positionals.length === 2) { await output(await daemonStatus()); return; }
@@ -60,23 +80,22 @@ async function main() {
   if (command === "sessions") { await output({ sessions: await listSessions(cwd()) }); return; }
   if (command === "gc") {
     if (values.apply && values["dry-run"]) throw new Error("Choose --apply or --dry-run, not both.");
-    await output(await collectGarbage(cwd(), { apply: values.apply === true, retentionDays: days }));
+    await output(await collectGarbage(cwd(), { apply: values.apply === true, retentionDays: days, signal: abort.signal }));
     return;
   }
   if (command !== "daemon" && !values.session) throw new Error("--session ID is required for per-session delivery and deduplication.");
   if (command === "join" || command === "leave") {
-    const options = { cwd: cwd(), ref: values.ref, adapter: values.agent, session: values.session! };
+    const options = { cwd: cwd(), ref: values.ref, adapter: values.agent, session: values.session!, signal: abort.signal };
     const session = command === "join" ? await joinSession(options) : await leaveSession(options);
     await output({ session, left: command === "leave" && session !== undefined });
     return;
   }
   if (command === "send") {
     if (!values.message) throw new Error("--message TEXT is required.");
-    const event = await sendMessage({ cwd: cwd(), ref: values.ref, adapter: values.agent, session: values.session!, text: values.message, files: values.file });
+    const event = await sendMessage({ cwd: cwd(), ref: values.ref, adapter: values.agent, session: values.session!, text: values.message, files: values.file, signal: abort.signal });
     await output({ eventId: event.id, recipients: event.recipients.length });
     return;
   }
-  const abort = new AbortController();
   const check = () => consumeMailbox({
     cwd: cwd(), ref: values.ref, session: values.session!, adapter: values.agent, signal: abort.signal,
     async deliver(notifications) {
@@ -86,33 +105,28 @@ async function main() {
       }
     },
   });
-  const stop = () => abort.abort();
-  process.once("SIGINT", stop);
-  process.once("SIGTERM", stop);
-  try {
-    if (command === "daemon") {
-      await runDaemon({ signal: abort.signal, intervalMs: Number(values["interval-ms"]), retentionDays: days, onEvent: output });
-      // Node cannot cancel stdout pipe writes; exit only after daemon locks and heartbeat are released.
-      if (abort.signal.aborted) process.exit(0);
-      return;
+  if (command === "daemon") {
+    await runDaemon({ signal: abort.signal, intervalMs: Number(values["interval-ms"]), retentionDays: days, onEvent: output });
+    return;
+  }
+  if (command === "check") { await check(); return; }
+  while (!abort.signal.aborted) {
+    try { await check(); } catch (error) {
+      if (abort.signal.aborted) throw error;
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     }
-    if (command === "check") { await check(); return; }
-    while (!abort.signal.aborted) {
-      try { await check(); } catch (error) {
-        if (!abort.signal.aborted) process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-      }
-      if (abort.signal.aborted) break;
-      await delay(5000, undefined, { signal: abort.signal }).catch(() => {});
-    }
-  } catch (error) {
-    if (!abort.signal.aborted) throw error;
-  } finally {
-    process.removeListener("SIGINT", stop);
-    process.removeListener("SIGTERM", stop);
+    if (abort.signal.aborted) break;
+    await delay(5000, undefined, { signal: abort.signal }).catch(() => {});
   }
 }
 
 main().catch((error) => {
+  if (abort.signal.aborted && (error === abort.signal.reason || error?.name === "AbortError" || error?.code === "ERR_STREAM_PREMATURE_CLOSE")) return;
   process.stderr.write(`worktree-sync: ${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
+}).finally(() => {
+  process.removeListener("SIGINT", stop);
+  process.removeListener("SIGTERM", stop);
+  // Node cannot cancel OS pipe writes; all awaited operation/lock cleanup has now completed.
+  if (abort.signal.aborted) process.exit(process.exitCode ?? 0);
 });

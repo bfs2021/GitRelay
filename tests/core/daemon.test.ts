@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { consumeMailbox } from "../../src/core/consumer.ts";
 import { daemonStatus } from "../../src/core/daemon-state.ts";
 import { runDaemon } from "../../src/core/daemon.ts";
-import { eventsIn, sendMessage } from "../../src/core/mailbox.ts";
+import { eventsIn, registerSession, sendMessage } from "../../src/core/mailbox.ts";
 import { hash, readJson, repository, stateDirectory, writeJson } from "../../src/core/store.ts";
 import { fixture, git } from "../helpers.ts";
 
@@ -59,7 +59,8 @@ test("one daemon discovers multiple repositories and isolates a failing subscrip
   git(f.root, "clone", f.main, clone);
   await consumeMailbox({ cwd: f.b, ref: "refs/heads/main", adapter: "codex", session: "B", async deliver() {} });
   await consumeMailbox({ cwd: clone, ref: "refs/heads/main", adapter: "pi", session: "clone", async deliver() {} });
-  await sendMessage({ cwd: f.a, ref: "refs/heads/missing", adapter: "cc", session: "bad-ref", text: "invalid subscription must not stop healthy refs" });
+  // A legacy/corrupt subscription must remain isolated; send no longer creates subscriptions.
+  await registerSession(await repository(f.a), { adapter: "cc", session: "bad-ref" }, "refs/heads/missing");
   const a = await repository(f.b);
   const b = await repository(clone);
   const errors: string[] = [];
@@ -115,7 +116,7 @@ test("blocked daemon output releases publish.lock and remains abortable", async 
   const f = await fixture(t);
   const receiver = { cwd: f.b, ref: "refs/heads/main", adapter: "codex", session: "B", async deliver() {} };
   await consumeMailbox(receiver);
-  await sendMessage({ cwd: f.a, ref: "refs/heads/missing", adapter: "cc", session: "bad", text: "invalid ref" });
+  await registerSession(await repository(f.a), { adapter: "cc", session: "bad" }, "refs/heads/missing");
   const repo = await repository(f.b);
   running = runDaemon({
     signal: abort.signal, intervalMs: 50,

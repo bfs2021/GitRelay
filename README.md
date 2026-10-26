@@ -78,7 +78,7 @@ worktree-sync send --cwd /project/worktree-A --agent claude-code --session claud
 worktree-sync sessions --cwd /project/worktree-A
 ```
 
-`--file` 可重复；省略时广播给其他已登记会话，提供时只投递给当前有同路径修改的工作区。新会话不补收加入前的广播。完整目录结构、回执语义和迁移说明见 [共享消息指南](docs/shared-messages.md)。
+`send` 只发送，不建立接收订阅；发送方需要收件时应先通过插件/hooks、`check` 或 `join` 登记。`--file` 可重复；省略时广播给其他已登记会话，提供时只投递给当前有同路径修改的工作区。新会话不补收加入前的广播。完整目录结构、回执语义和迁移说明见 [共享消息指南](docs/shared-messages.md)。
 
 ### 会话退出、清理和可选 daemon
 
@@ -110,7 +110,7 @@ worktree-sync daemon status
 | `/worktree leave` | 显式停止当前会话订阅，保留未读消息 |
 | `/worktree join` | 显式重新加入并启动接收器 |
 
-路径在对话框填写，支持空格、中文和绝对路径；相对路径以当前 pi 目录为基准，不展开 `~` 或环境变量。创建后在新目录另启 agent，不改变当前 pi 会话目录。
+路径在对话框填写，支持空格、中文和绝对路径；相对路径以当前 pi 目录为基准，不展开 `~` 或环境变量。创建后在新目录另启 agent，不改变当前 pi 会话目录。起点存在同名分支和标签时拒绝猜测，请使用 `refs/heads/...` 或 `refs/tags/...` 完整引用。
 
 删除不使用 `--force`，拒绝删除主工作区、锁定工作区及当前 pi 所在 worktree（含子目录/符号链接入口）。修改、暂存或未跟踪文件由 Git 阻止删除；**被 Git 忽略的文件仍可能被一起删除，请自行备份**。其他 agent 进程所在目录不在此删除保护范围内。
 

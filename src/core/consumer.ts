@@ -47,7 +47,7 @@ export async function consumeMailbox(options: MailboxOptions): Promise<Notificat
           await writeJson(join(repo.directory, "sessions", `${key}.json`), { ...registered, migrated: true });
         }
         return true;
-      });
+      }, { signal: options.signal, waitMs: 5000 });
       if (!subscribed) return [];
       const receipts = join(repo.directory, "receipts", key);
       await mkdir(receipts, { recursive: true, mode: 0o700 });
@@ -87,7 +87,7 @@ export async function consumeMailbox(options: MailboxOptions): Promise<Notificat
         for (const notification of notifications) await writeJson(join(receipts, `${notification.event.id}.json`), { eventId: notification.event.id, status: "delivered", at: new Date().toISOString() });
       }
       return notifications;
-    });
+    }, { signal: options.signal });
   } catch (error) {
     if (error instanceof BusyError) return [];
     throw error;

@@ -32,7 +32,7 @@ test("Claude Code publishes one message; Codex and OpenCode receive independent 
   const repo = await repository(f.a);
   assert.equal((await eventsIn(repo)).length, 1);
   assert.equal((await readdir(join(repo.directory, "receipts"))).length, 2);
-  assert.equal((await listSessions(f.a)).length, 3);
+  assert.equal((await listSessions(f.a)).length, 2);
   if (process.platform !== "win32") {
     assert.equal((await stat(repo.directory)).mode & 0o777, 0o700);
     assert.equal((await stat(join(repo.directory, "events", `${event.id}.json`))).mode & 0o777, 0o600);

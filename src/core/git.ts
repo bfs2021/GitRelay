@@ -72,6 +72,8 @@ export async function addWorktree(
   if (branch.startsWith("-") || branch.startsWith("@{")) throw new Error("请使用明确的分支名。");
   const target = resolve(cwd, path);
   if (newBranch) {
+    const refs = (await git(cwd, ["for-each-ref", "--format=%(refname)", "--", `refs/heads/${startPoint}`, `refs/tags/${startPoint}`])).trim().split("\n");
+    if (refs.includes(`refs/heads/${startPoint}`) && refs.includes(`refs/tags/${startPoint}`)) throw new Error("起点同时匹配分支和标签；请使用 refs/heads/ 或 refs/tags/ 下的完整引用。");
     const commit = (await git(cwd, ["rev-parse", "--verify", "--end-of-options", `${startPoint}^{commit}`])).trim();
     await git(cwd, ["worktree", "add", "-b", branch, "--", target, commit]);
   } else {

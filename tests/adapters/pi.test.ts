@@ -16,6 +16,7 @@ function harness(hasUI = true, cwd = process.cwd()) {
   const inputs: (string | undefined)[] = [];
   const messages: any[] = [];
   const entries: any[] = [];
+  const confirmations: string[] = [];
   let busy = false;
   let confirmed = false;
   let command: Parameters<ExtensionAPI["registerCommand"]>[1] | undefined;
@@ -43,11 +44,11 @@ function harness(hasUI = true, cwd = process.cwd()) {
         return selected === "FIRST" ? options[0] : selected;
       },
       async input() { return inputs.shift(); },
-      async confirm() { return confirmed; },
+      async confirm(_title: string, message: string) { confirmations.push(message); return confirmed; },
     },
   } as unknown as ExtensionCommandContext;
   assert.ok(command);
-  return { run: (args: string) => command!.handler(args, ctx), notices, selections, inputs, messages, entries, confirm() { confirmed = true; } };
+  return { run: (args: string) => command!.handler(args, ctx), notices, selections, inputs, messages, entries, confirmations, confirm() { confirmed = true; } };
 }
 
 test("pi boolean CLI string false disables monitoring before accessing the worktree", async () => {
@@ -100,6 +101,7 @@ test("dialog flow creates, lists, cancels deletion and confirms deletion", async
   ui.selections.push("FIRST");
   await ui.run("remove");
   assert.equal((await listWorktrees(repo)).length, 1);
+  assert.match(ui.confirmations.at(-1)!, /Git 忽略.*\.env.*build/);
   assert.match(ui.notices.at(-1)!.message, /已删除/);
 });
 

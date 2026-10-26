@@ -7,7 +7,7 @@ import { collectGarbage } from "../../src/core/cleanup.ts";
 import { worktreeFiles } from "../../src/core/changes.ts";
 import { daemonStatus } from "../../src/core/daemon-state.ts";
 import { removeWorktree, listWorktrees } from "../../src/core/git.ts";
-import { eventsIn, publishUpstream, readReceipt, readSession, sendMessage, sessionKey, type Notification } from "../../src/core/mailbox.ts";
+import { eventsIn, formatNotifications, publishUpstream, readReceipt, readSession, registerSession, sendMessage, sessionKey, type Notification } from "../../src/core/mailbox.ts";
 import { readRef, synchronizeRef } from "../../src/core/publisher.ts";
 import { repository, stateDirectory, withLock, writeJson } from "../../src/core/store.ts";
 import { fixture, git } from "../helpers.ts";
@@ -74,7 +74,8 @@ test("send-first legacy sessions retain the pre-publication migration baseline",
   const key = sessionKey(repo, b, ref);
   await mkdir(join(repo.common, "worktree-agent-sync"));
   await writeJson(join(repo.common, "worktree-agent-sync", `${key}.json`), { root: f.b, ref, commit: f.initial });
-  await sendMessage({ ...b, text: "register before checking" });
+  // Model an older producer: current send intentionally does not subscribe.
+  await registerSession(repo, b, ref);
   const first = await f.commit(f.main, "shared.txt", "first\n");
   await consumeMailbox(observer);
   const second = await f.commit(f.main, "shared.txt", "second\n");
@@ -100,7 +101,7 @@ test("retry after event publication includes new subscribers without replaying e
   await writeJson(join(repo.directory, "receipts", key, `${event.id}.json`), receipt);
   assert.equal((await readRef(repo, ref))!.commit, f.initial);
   const c = { cwd: f.c, ref, adapter: "pi", session: "C", async deliver() {} };
-  await sendMessage({ ...c, text: "register during retry window" });
+  await registerSession(await repository(f.c), c, ref);
   await withLock(join(repo.directory, "publish.lock"), () => synchronizeRef(repo, ref, b));
   const retried = (await eventsIn(repo)).find((item) => item.id === event.id)!;
   assert.ok(retried.recipients.includes(sessionKey(await repository(f.c), c, ref)));
@@ -130,6 +131,89 @@ test("unborn and unrelated worktree histories give actionable errors and preserv
   git(f.b, "switch", "feature/b");
   await writeFile(join(f.b, "shared.txt"), "local again\n");
   assert.equal((await consumeMailbox(b)).length, 1);
+});
+
+test("concurrent consumers all receive every broadcast rather than losing the publish-lock race", async (t) => {
+  const f = await fixture(t);
+  const received = Array.from({ length: 10 }, () => [] as string[]);
+  const consumers = received.map((ids, index) => ({
+    cwd: f.b, ref, adapter: "test", session: `receiver-${index}`,
+    async deliver(batch: Notification[]) { ids.push(...batch.map((notification) => notification.event.id)); },
+  }));
+  await Promise.all(consumers.map(consumeMailbox));
+  const expected: string[] = [];
+  for (let round = 0; round < 3; round++) {
+    expected.push((await sendMessage({ cwd: f.a, adapter: "cli", session: "send-only", text: `round ${round}` })).id);
+    await Promise.all(consumers.map(consumeMailbox));
+    for (const ids of received) assert.deepEqual(ids, expected);
+  }
+});
+
+test("send-only identities do not subscribe or prevent consumers from collecting each other's broadcasts", async (t) => {
+  const f = await fixture(t);
+  const b = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver() {} };
+  const c = { cwd: f.c, ref, adapter: "pi", session: "C", async deliver() {} };
+  await consumeMailbox(b);
+  await consumeMailbox(c);
+  const first = await sendMessage({ cwd: f.a, ref: "refs/heads/mian", adapter: "cli", session: "one-off", text: "send without subscribing" });
+  const senderRepo = await repository(f.a);
+  const senderKey = sessionKey(senderRepo, { adapter: "cli", session: "one-off" }, "refs/heads/mian");
+  assert.equal(await readSession(senderRepo, senderKey), undefined);
+  await consumeMailbox(b);
+  await consumeMailbox(c);
+  const second = await sendMessage({ ...b, text: "B to C" });
+  const third = await sendMessage({ ...c, text: "C to B" });
+  assert.equal(second.recipients.length, 1);
+  assert.equal(third.recipients.length, 1);
+  await consumeMailbox(b);
+  await consumeMailbox(c);
+  assert.deepEqual(new Set((await collectGarbage(f.b, { apply: true, retentionDays: 0 })).removed), new Set([first.id, second.id, third.id]));
+});
+
+test("pruned Git objects become an acknowledged history-gap notification, not an inbox barrier", async (t) => {
+  const f = await fixture(t);
+  await writeFile(join(f.b, "shared.txt"), "local\n");
+  const b = { cwd: f.b, ref, adapter: "test", session: "B", async deliver() {} };
+  await consumeMailbox(b);
+  const lost = await f.commit(f.main, "shared.txt", "pruned commit\n");
+  await consumeMailbox({ ...b, async deliver() { return false; } });
+  git(f.main, "reset", "--hard", f.initial);
+  git(f.main, "reflog", "expire", "--expire=now", "--all");
+  git(f.main, "gc", "--prune=now");
+  assert.throws(() => git(f.main, "cat-file", "-e", lost));
+  await f.commit(f.main, "shared.txt", "new history\n");
+  const message = await sendMessage({ cwd: f.a, adapter: "cli", session: "sender", text: "must get past old history" });
+  const repo = await repository(f.b);
+  const key = sessionKey(repo, b, ref);
+  const queued = await consumeMailbox({ ...b, async deliver() { return false; } });
+  const gaps = queued.filter((item) => item.kind === "upstream" && item.change.unavailable);
+  assert.equal(gaps.length, 2, "both a missing range end and a missing range start are diagnosed");
+  assert.match(formatNotifications(gaps), /历史不可用/);
+  for (const item of queued) assert.equal(await readReceipt(repo, key, item.event.id), undefined);
+  const accepted = await consumeMailbox(b);
+  assert.ok(accepted.some((item) => item.event.id === message.id));
+  for (const item of accepted) assert.equal((await readReceipt(repo, key, item.event.id))?.status, "delivered");
+  assert.deepEqual(await consumeMailbox(b), []);
+  await f.commit(f.main, "shared.txt", "normal update\n");
+  const next = await consumeMailbox(b);
+  assert.equal(next.length, 1);
+  assert.ok(next[0].kind === "upstream" && !next[0].change.unavailable);
+});
+
+test("recreating a repository at the same path reports old history and still receives new messages", async (t) => {
+  const f = await fixture(t);
+  const receiver = { cwd: f.main, ref, adapter: "test", session: "same-path", async deliver() {} };
+  await consumeMailbox(receiver);
+  const oldRepo = await repository(f.main);
+  await rm(join(f.main, ".git"), { recursive: true });
+  git(f.main, "init", "-b", "main");
+  await f.commit(f.main, "shared.txt", "replacement repository\n");
+  const message = await sendMessage({ cwd: f.main, adapter: "cli", session: "send-only", text: "new repo note" });
+  assert.equal((await repository(f.main)).directory, oldRepo.directory);
+  const batch = await consumeMailbox(receiver);
+  assert.ok(batch.some((item) => item.kind === "upstream" && item.change.unavailable));
+  assert.ok(batch.some((item) => item.event.id === message.id));
+  assert.deepEqual(await consumeMailbox(receiver), []);
 });
 
 test("removing a prunable worktree cleans its registration and preserves its branch", async (t) => {

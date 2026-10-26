@@ -36,6 +36,8 @@ print/JSON 模式不启动自动监控，避免后台轮询干扰一次性执行
 
 pi 现在使用与其他平台相同的用户级共享存储，以原生 session ID 区分消费回执。仅排入 follow-up 队列时不确认；实际进入会话历史后再确认。同一会话的 `/worktree join` 或 leave/join 保留待落盘批次的去重信息；Esc 丢弃队列后，下次空闲检查会重试，不必重载扩展。旧 custom entries/messages 中的游标可导入补检。首次登记在当前主分支建立基线，不补发加入前的历史。
 
+全局 hooks 在非 Git 目录返回 `{}`；OpenCode 在非 Git location 不登记会话、不启动轮询，之后初始化仓库需重载插件。
+
 ## 通用 CLI 与 hooks 安装
 
 在本包目录安装 CLI：
@@ -56,6 +58,10 @@ worktree-sync --help
 - `SessionStart` 建立或恢复会话基线。
 - `UserPromptSubmit` / `PostToolUse` 返回 `hookSpecificOutput.additionalContext`，内容进入模型上下文。
 - `Stop` 有新事件时返回 `decision: block` 和变更内容，请求继续处理；`stop_hook_active` 时不再次要求继续。
+
+带非空 `agent_id` 的子 agent hook 返回 `{}`，不单独订阅或消费父会话消息，避免子 agent 退出后留下永久收件人。父会话会在下一次支持的 hook 收件。
+
+hook 输入按字节累计，最多保留 16 MiB JSON，以容纳含较大文件正文的工具事件。超过上限时排空输入并返回 `{}`、输出诊断，不确认事件，由下一次较小的 hook 重试；不会无界缓冲或使本次用户工具调用因 relay 失败。
 
 ### Codex
 
@@ -89,7 +95,7 @@ export { default } from "/absolute/path/to/worktree-relay/dist/adapters/opencode
 从源码使用前先执行 `npm run build`（npm 打包时会自动构建）。删除旧入口后重启 OpenCode，避免同一插件被重复加载。
 
 - 通过 `ctx.session.hook("prompt", ...)` 登记收到用户输入的根会话，并建立或恢复基线。
-- 每 5 秒检查一次；通过 `ctx.session.prompt({ sessionID, text, delivery: "queue", metadata })` 投递。忙时由宿主排队，空闲时自动启动；Promise 成功代表输入已持久接收，再写独立回执。
+- 每 5 秒顺序检查已登记会话，不重叠启动轮询批次；避免同目录会话竞争发布锁而长期饥饿。通过 `ctx.session.prompt({ sessionID, text, delivery: "queue", metadata })` 投递。忙时由宿主排队，空闲时自动启动；Promise 成功代表输入已持久接收，再写独立回执。
 - 自动消息带 `metadata.source: "worktree-relay"`，不把自己的投递当作新用户登记，避免递归。
 - 通过 `ctx.event.subscribe()` 的 `session.deleted` 事件取消对应检查；注册查询期间的删除也会阻止登记，避免留下幽灵轮询。会话查询失败只记录 warning，不让用户 prompt 因本插件失败。插件返回 cleanup，卸载时取消事件订阅、轮询和进行中的操作。
 - 不枚举历史会话或主动登记子 agent。投递前核对会话的 `location.directory` 与 `ctx.location.directory`，不把其他目录的会话映射到当前 worktree。
@@ -118,7 +124,7 @@ worktree-sync check --cwd /path/to/worktree-B --session conversation-B
 worktree-sync watch --cwd /path/to/worktree-B --session conversation-B
 ```
 
-上游事件包含 `type: worktree.upstream-change`、共享 `eventId`、`root`、`ref`、`previous`、`commit`、`rewritten`、`snapshot`、`files`、`commits`、有界 `patch` 和 `message`。跨 agent 消息类型为 `worktree.agent-message`，包含 `sender`、`text`、`files` 和 `message`。一次检查可能输出多行 NDJSON。
+上游事件包含 `type: worktree.upstream-change`、共享 `eventId`、`root`、`ref`、`previous`、`commit`、`rewritten`、`snapshot`、`unavailable`、`files`、`commits`、有界 `patch` 和 `message`。跨 agent 消息类型为 `worktree.agent-message`，包含 `sender`、`text`、`files` 和 `message`。一次检查可能输出多行 NDJSON。
 
 stdout 仅用于数据，诊断写入 stderr。**输出成功不等于 agent 已处理**：CLI 在成功写出后记录独立回执。自有宿主使用 `consumeMailbox({ deliver })` 接收批次，成功返回后确认，`return false` 表示仅排队、尚未持久接受。`consumeChanges` 保留为只接收上游事件的兼容 API。Node 宿主导入构建后的 `dist/core/consumer.js`。发送成功但回执落盘前崩溃仍可能重发；使用 eventId 去重，详见 [共享消息指南](shared-messages.md)。
 
@@ -131,8 +137,8 @@ stdout 仅用于数据，诊断写入 stderr。**输出成功不等于 agent 已
 ## 状态、恢复和限制
 
 - 所有平台的状态统一写入用户级 `worktree-agent-sync/repos/<repo-id>/`，支持 `XDG_STATE_HOME` / `WORKTREE_SYNC_STATE_DIR`。同仓库事件共享、每个会话独立回执，不同 clone 不互通。旧 Git 目录游标只读迁移，不删除原文件。
-- 同会话并发检查用排他锁避免重复发送；正常退出会释放。若进程被强杀，可能留下 `.lock`；确认其中 PID 已退出后，只删除对应 `.lock`，保留 `.json` 游标。检测到无主锁会报出路径，不会自动抢锁或删除状态。
-- 主分支有共同祖先的 reset/force-push 会标为历史改写，发送前后快照差异。若历史完全无关、旧提交已被清理或 Git 正处于无法读取的状态，保留原游标并报错，不静默跳过。
+- 同会话并发检查用排他锁避免重复发送；新鲜锁的竞争跳过本轮，持锁超过 60 秒会明确提示。仓库发布锁竞争会带抖动等待，最多 5 秒，超时不静默跳过。所有 CLI 锁操作均响应 SIGINT/SIGTERM，清理后退出；输出管道堵塞时也不写成功回执，不留下消费锁。SIGKILL/断电仍可能留下 `.lock`，PID 复用也不能靠 pid-file 自动识别；核实没有 relay 操作仍拥有该锁后再移除，不自动抢锁或删除状态。
+- 主分支有共同祖先的 reset/force-push 会标为历史改写，发送前后快照差异。若事件的提交对象已无法读取（包括仓库同路径重建），投递 `unavailable: true` 的明确历史缺口通知；只有宿主接受后才确认，不把未知影响视为无关，后续消息可继续。对象完整但没有共同祖先、worktree HEAD 无法比较或 Git 程序无法执行时仍报错并保留事件。
 - 检测依据为当前工作区状态，不是 agent 未来打算修改的文件。跨文件语义依赖和跨主机 worktree 不在范围内。
 - 首次登记之前的变化不补发；无交集时记录 `irrelevant` 回执，后来才开始修改该文件不会补发已经跳过的历史。新会话也不会收到加入之前的主动广播。
 - 同一轮正常 first-parent 前进会逐个检查提交，避免漏掉先修改再还原的文件。旧位置仅通过其他父节点可达时，使用前后快照并标记 `snapshot: true`，不重放旧 main 变化；这个特殊路径不检测中间改后还原。大量离线历史可能使检查变慢。每次 Git 命令有 30 秒超时，错误不会写入成功回执。

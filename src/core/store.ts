@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { git } from "./git.ts";
 import { watchRoot } from "./changes.ts";
 
@@ -61,25 +62,39 @@ export async function writeJson(path: string, value: unknown): Promise<void> {
 
 export class BusyError extends Error {}
 
-export async function withLock<T>(path: string, run: () => Promise<T>, metadata?: { token: string }): Promise<T> {
+export async function withLock<T>(path: string, run: () => Promise<T>, options: { token?: string; signal?: AbortSignal; waitMs?: number } = {}): Promise<T> {
+  const deadline = performance.now() + (options.waitMs ?? 0);
   let lock;
-  try { lock = await open(path, "wx", 0o600); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    const owner = await readJson(path).catch(() => undefined) as { pid?: number } | undefined;
-    if (owner && Number.isInteger(owner.pid) && owner.pid! > 0) {
-      try { process.kill(owner.pid!, 0); }
-      catch (failure) {
-        if ((failure as NodeJS.ErrnoException).code === "ESRCH") throw new Error(`Stale worktree-sync lock: ${path}. Verify the owner has exited, then remove this lock file.`);
+  for (;;) {
+    options.signal?.throwIfAborted();
+    try { lock = await open(path, "wx", 0o600); break; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const owner = await readJson(path).catch(() => undefined) as { pid?: number } | undefined;
+      const info = await stat(path).catch((failure) => {
+        if (failure.code === "ENOENT") return undefined;
+        throw failure;
+      });
+      if (!info) continue;
+      if (owner && Number.isInteger(owner.pid) && owner.pid! > 0) {
+        try { process.kill(owner.pid!, 0); }
+        catch (failure) {
+          if ((failure as NodeJS.ErrnoException).code === "ESRCH") throw new Error(`Stale worktree-sync lock: ${path}. Verify the owner has exited, then remove this lock file.`);
+        }
       }
-    } else {
-      const info = await stat(path).catch(() => undefined);
-      if (info && Date.now() - info.mtimeMs > 60_000) throw new Error(`Invalid worktree-sync lock: ${path}. Verify no check is running before removing it.`);
+      // shortcut: PID files cannot authenticate reused PIDs; use OS locks if automatic recovery is required.
+      const old = Date.now() - info.mtimeMs > 60_000;
+      if (old || (options.waitMs && performance.now() >= deadline)) {
+        throw new Error(`Worktree-sync lock remains busy: ${path} (PID ${owner?.pid ?? "unknown"}). The owner may be stalled or its PID reused; verify no relay operation owns this lock before removing it.`);
+      }
+      if (!options.waitMs) throw new BusyError(`Worktree-sync is busy: ${path}`);
+      await delay(Math.min(10 + Math.random() * 30, Math.max(1, deadline - performance.now())), undefined, { signal: options.signal });
     }
-    throw new BusyError(`Worktree-sync is busy: ${path}`);
   }
   try {
-    await lock.writeFile(JSON.stringify({ pid: process.pid, ...metadata }));
+    options.signal?.throwIfAborted();
+    await lock.writeFile(JSON.stringify({ pid: process.pid, token: options.token }));
+    options.signal?.throwIfAborted();
     return await run();
   } finally {
     try { await lock.close(); }

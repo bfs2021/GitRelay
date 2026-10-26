@@ -44,7 +44,7 @@ test("lastSeen alone does not retire an offline session, and unknown leave does 
   await writeJson(join(repo.directory, "sessions", `${session.key}.json`), { ...session, lastSeen: "2000-01-01T00:00:00.000Z" });
   assert.equal((await sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "offline still subscribed" })).recipients.length, 1);
   assert.equal(await leaveSession({ ...receiver, session: "not-registered" }), undefined);
-  assert.equal((await listSessions(f.b)).length, 2);
+  assert.equal((await listSessions(f.b)).length, 1);
 });
 
 test("leave cannot race an in-flight receive and never overwrites its session lock", async (t) => {

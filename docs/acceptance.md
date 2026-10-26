@@ -46,12 +46,13 @@
 
 | 验收项 | 结果 | 证据 |
 | --- | --- | --- |
-| 全量测试 | 74/74 通过 | `npm test`；含路径规范化、非 first-parent 快进及下述审查回归 |
+| 全量测试 | 95/95 通过 | `npm test`；含两轮审查回归及真实 CLI 中断/背压验证 |
 | 静态类型检查 | 通过 | `npm run typecheck`；核心、适配器与测试 |
 | 依赖审计 | 0 个已知漏洞 | `npm audit`，含开发依赖 |
 | 新包名与命令兼容 | 通过 | `worktree-relay` tarball 离线安装；`worktree-relay --help` / `worktree-sync --help` |
 | 规模基准 | 通过所有自校验 | `npm run benchmark`；详见 [性能记录](performance.md) |
 | daemon / CLI 核心验收重复执行 | 9/9 连续三轮通过 | 构建后运行 `tests/cli/maintenance.test.ts` 与 `tests/core/daemon.test.ts` |
+| 并发/锁/适配器重点回归 | 39/39 连续三轮通过 | `regressions`、`store`、`daemon`、`opencode`、CLI `maintenance` / `resilience` 六个测试文件 |
 | 构建后 JS 语法检查 | 通过 | `node --check` 检查 `dist/` 下所有 JS |
 | npm tarball 离线安装 | 通过 | 临时 prefix，`--offline --ignore-scripts --omit=optional` |
 | 安装后的 CLI 闭环 | 通过 | 登记 → 跨 agent 发送/接收 → leave → 确认事件 GC |
@@ -71,6 +72,18 @@
 - 原始 daemon 背压复现脚本再次运行：stdout 未读取时不再永久占住发布锁；SIGTERM 后进程退出码 0，`daemon.lock`、`daemon.json`、`publish.lock` 均不存在。
 
 以上新增适配器回归使用受控宿主，不是新一轮真实模型交互；不会扩大前述客户端/版本验收范围。
+
+### 第二轮审查回归
+
+- 并发/饥饿：10 个 core 消费者并发登记与收件、10 个同 location OpenCode 会话连续 3 条广播，各自确认且不重复；轮询批次不重叠。仓库锁有界重试不依赖下一次 tick 偶然抢锁。
+- 订阅生命周期：带 `agent_id` 的子 agent hook 不登记/不消费父收件箱；send-only 身份（包括拼错 ref）不创建接收订阅，不妨碍真实消费者之间广播的 GC。旧 send-first 的回归改用真实旧状态形状，保留兼容性检查。
+- 取消与背压：新增 `tests/cli/resilience.test.ts`。真实 CLI 的 gc/send/join/leave 在持锁阶段收到 SIGINT 后清锁；FileHandle 写入延迟仅用于稳定信号时机。另有不加延迟的 5000 事件真实 GC 扫描中断验证。check/watch 使用有效的大 recipients 快照填满真实 OS stdout 管道，SIGTERM 后退出、不留下锁、不确认未完成输出，并可重试收件。
+- 历史缺口：实际清理 Git 对象、在同路径重建仓库均可得到明确的 `unavailable` 通知，宿主接受后才确认，后续消息继续投递。Git 程序无法执行时仍报错，不能误确认。
+- hooks/环境：1.1 MiB Write 输入正常投递；超过 16 MiB 输入安全返回空响应、不确认，下一次 hook 可补检。非 Git 目录的 hooks/OpenCode 安静降级。
+- 低严重度项：同名 tag/branch 起点要求完整引用；pi 删除确认明确提醒 ignored 文件可能被删；send/GC 等待仓库锁后可成功；等待超时或超过 60 秒的消费锁会给出 PID/路径诊断，不自动抢锁。
+- `node scripts/benchmark.mjs` 的 100/1,000/10,000 事件自检全部通过。本轮与重点回归并行运行，只作正确性自检，不替换原性能对照结果。
+
+本轮未运行真实 Claude Code/OpenCode 模型端到端或 Windows 验收，也未清理用户已有状态。已存在的幽灵订阅需核对后显式退出，旧未读消息仍由用户决定是否确认；PID 复用不能靠 pid-file 自动证明，详见 [共享消息指南](shared-messages.md) 与 [维护指南](maintenance.md)。
 
 ## 功能验收矩阵
 

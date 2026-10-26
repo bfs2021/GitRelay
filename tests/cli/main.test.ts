@@ -26,7 +26,7 @@ test("separate CLI processes share messages across coding agents", async (t) => 
     assert.equal(received.text, "跨进程共享消息");
     assert.equal((await run(...args)).stdout, "");
   }
-  assert.equal(JSON.parse((await run("sessions", "--cwd", f.main)).stdout).sessions.length, 3);
+  assert.equal(JSON.parse((await run("sessions", "--cwd", f.main)).stdout).sessions.length, 2);
 });
 
 test("CLI help, explicit cwd and hooks survive a deleted process cwd", { skip: process.platform === "win32" }, async (t) => {

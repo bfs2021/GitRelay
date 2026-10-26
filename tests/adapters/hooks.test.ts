@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { hookResponse, runHook, type HookAgent } from "../../src/adapters/hooks.ts";
 import { fixture } from "../helpers.ts";
-import { sendMessage } from "../../src/core/mailbox.ts";
+import { consumeMailbox } from "../../src/core/consumer.ts";
+import { collectGarbage } from "../../src/core/cleanup.ts";
+import { listSessions, sendMessage } from "../../src/core/mailbox.ts";
 
 test("protocols return model context or continuation rather than a human notification", () => {
   for (const agent of ["claude-code", "codex"] as const) {
@@ -28,6 +30,34 @@ test("multiple shared messages produce one valid hook response", async (t) => {
   assert.equal(responses.length, 1);
   assert.match(JSON.stringify(responses[0]), /first shared note/);
   assert.match(JSON.stringify(responses[0]), /second shared note/);
+});
+
+test("subagent tool hooks neither subscribe nor consume the parent's inbox or pin GC", async (t) => {
+  const f = await fixture(t);
+  const parent = { hook_event_name: "SessionStart", session_id: "S", cwd: f.b };
+  const responses: object[] = [];
+  const output = async (value: object) => { responses.push(value); };
+  await runHook("claude-code", parent, "refs/heads/main", output);
+  const consumer = { cwd: f.c, ref: "refs/heads/main", adapter: "codex", session: "C", async deliver() {} };
+  await consumeMailbox(consumer);
+  const event = await sendMessage({ cwd: f.a, adapter: "cli", session: "send-only", text: "for parent" });
+  await runHook("claude-code", { ...parent, hook_event_name: "PostToolUse", agent_id: "sub1" }, "refs/heads/main", output);
+  assert.deepEqual(responses.at(-1), {});
+  assert.deepEqual((await listSessions(f.b)).map((session) => session.session).sort(), ["C", "S"]);
+  await runHook("claude-code", { ...parent, hook_event_name: "PostToolUse" }, "refs/heads/main", output);
+  assert.match(JSON.stringify(responses.at(-1)), /for parent/);
+  await consumeMailbox(consumer);
+  assert.deepEqual((await collectGarbage(f.b, { apply: true, retentionDays: 0 })).removed, [event.id]);
+});
+
+test("global hooks in a non-Git directory quietly return an empty protocol response", async (t) => {
+  const f = await fixture(t);
+  for (const agent of ["claude-code", "codex", "cursor"] as const) {
+    const responses: object[] = [];
+    await runHook(agent, { hook_event_name: agent === "cursor" ? "postToolUse" : "SessionStart", session_id: "S", conversation_id: "S", cwd: f.root }, "refs/heads/main", async (value) => { responses.push(value); });
+    assert.deepEqual(responses, [{}]);
+  }
+  assert.deepEqual(await listSessions(f.b), []);
 });
 
 for (const agent of ["claude-code", "codex", "cursor"] as HookAgent[]) {

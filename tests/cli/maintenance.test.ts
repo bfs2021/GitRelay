@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
-import { eventsIn, sendMessage } from "../../src/core/mailbox.ts";
+import { eventsIn, registerSession, sendMessage } from "../../src/core/mailbox.ts";
 import { readJson, repository, stateDirectory } from "../../src/core/store.ts";
 import { fixture } from "../helpers.ts";
 
@@ -66,7 +66,8 @@ test("daemon output failure exits without leaving its lock or heartbeat", async 
 
 test("daemon SIGTERM exits even when stdout is an unread full pipe", async (t) => {
   const f = await fixture(t);
-  await sendMessage({ cwd: f.a, ref: "refs/heads/missing", adapter: "cc", session: "bad", text: "invalid ref" });
+  await run("check", "--cwd", f.a, "--session", "healthy");
+  await registerSession(await repository(f.a), { adapter: "cc", session: "bad" }, "refs/heads/missing");
   const repo = await repository(f.a);
   const script = `
     const write = process.stdout.write.bind(process.stdout);

@@ -33,11 +33,12 @@ export async function collectRepository(repo: Repository, options: CleanupOption
   return withLock(join(repo.directory, "publish.lock"), async () => {
     const approved: SharedEvent[] = [];
     for (const name of await readdir(join(repo.directory, "trash"))) {
+      options.signal?.throwIfAborted();
       if (!/^[a-f0-9]{64}\.json$/.test(name)) continue;
       const value = await readJson(join(repo.directory, "trash", name));
       if (value !== undefined) approved.push(validateEvent(value, name.slice(0, -5)));
     }
-    const events = await eventsIn(repo); // Validate before making any deletion.
+    const events = await eventsIn(repo, undefined, options.signal); // Validate before making any deletion.
     const cutoff = Date.now() - days * 86_400_000;
     for (const event of [...approved, ...events]) {
       options.signal?.throwIfAborted();
@@ -71,7 +72,7 @@ export async function collectRepository(repo: Repository, options: CleanupOption
       }
     }
     return report;
-  });
+  }, { signal: options.signal, waitMs: 5000 });
 }
 
 export async function collectGarbage(cwd: string, options: CleanupOptions = {}): Promise<CleanupReport> {

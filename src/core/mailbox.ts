@@ -163,11 +163,12 @@ function validateMessage(text: unknown, files: unknown, strict = true): string[]
   return [...new Set(normalized)];
 }
 
-export async function sendMessage(options: Identity & { cwd: string; ref?: string; text: string; files?: string[] }): Promise<AgentMessage> {
+export async function sendMessage(options: Identity & { cwd: string; ref?: string; text: string; files?: string[]; signal?: AbortSignal }): Promise<AgentMessage> {
   validateIdentity(options);
   const files = validateMessage(options.text, options.files ?? []);
-  const repo = await repository(options.cwd);
+  const repo = await repository(options.cwd, options.signal);
   for (const file of files) {
+    options.signal?.throwIfAborted();
     const info = await stat(join(repo.root, file)).catch((error) => {
       if (error.code === "ENOENT") return undefined; // Deleted/renamed files can still be coordination targets.
       throw error;
@@ -177,13 +178,14 @@ export async function sendMessage(options: Identity & { cwd: string; ref?: strin
   const ref = options.ref ?? "refs/heads/main";
   return withLock(join(repo.directory, "publish.lock"), async () => {
     await writeJson(join(repo.directory, "repo.json"), { id: repo.id, common: repo.common });
-    const sender = await registerSession(repo, options, ref);
-    if (sender.closedAt) throw new Error("This session has left; use join before sending messages.");
+    const sender = await readSession(repo, sessionKey(repo, options, ref));
+    if (sender?.closedAt) throw new Error("This session has left; use join before sending messages.");
     const recipients = (await sessionsIn(repo)).filter((session) => !session.closedAt && !(session.root === repo.root && session.adapter === options.adapter && session.session === options.session)).map((session) => session.key);
     const event: AgentMessage = { id: hash(randomUUID()), kind: "message", createdAt: new Date().toISOString(), sender: { adapter: options.adapter, session: options.session, root: repo.root }, recipients, text: options.text, files };
+    options.signal?.throwIfAborted();
     await writeJson(join(repo.directory, "events", `${event.id}.json`), event);
     return event;
-  });
+  }, { signal: options.signal, waitMs: 5000 });
 }
 
 export function formatNotifications(notifications: Notification[]): string {

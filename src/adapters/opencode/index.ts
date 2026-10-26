@@ -1,5 +1,6 @@
 import type { Plugin } from "@opencode/plugin";
 import { consumeMailbox } from "../../core/consumer.ts";
+import { watchRoot } from "../../core/changes.ts";
 import { formatNotifications } from "../../core/mailbox.ts";
 
 type SessionID = Parameters<Plugin.Context["session"]["get"]>[0]["sessionID"];
@@ -7,10 +8,13 @@ type SessionID = Parameters<Plugin.Context["session"]["get"]>[0]["sessionID"];
 export default {
   id: "worktree-relay",
   async setup(ctx) {
+    try { await watchRoot(ctx.location.directory); }
+    catch { return async () => {}; }
     const sessions = new Map<SessionID, { abort: AbortController; active?: Promise<void> }>();
     const deleted = new Set<SessionID>();
     const abort = new AbortController();
     let timer: ReturnType<typeof setInterval> | undefined;
+    let polling: Promise<void> | undefined;
     const ref = process.env.WORKTREE_MAIN_REF ?? "refs/heads/main";
     const deferred = new Error("Establish baseline without recursively prompting");
     const warn = (error: unknown) => console.warn(`[Worktree Relay] ${error instanceof Error ? error.message : String(error)}`);
@@ -45,7 +49,11 @@ export default {
           await scan(event.sessionID, true);
         }
         if (!abort.signal.aborted && sessions.size && !timer) {
-          timer = setInterval(() => { for (const id of sessions.keys()) void scan(id); }, 5000);
+          timer = setInterval(() => {
+            polling ??= (async () => {
+              for (const id of sessions.keys()) await scan(id);
+            })().finally(() => { polling = undefined; });
+          }, 5000);
           timer.unref?.();
         }
       } catch (error) {
@@ -72,6 +80,7 @@ export default {
       for (const state of sessions.values()) state.abort.abort();
       await Promise.all([...sessions.values()].map((state) => state.active));
       sessions.clear();
+      await polling;
       await events;
     };
   },

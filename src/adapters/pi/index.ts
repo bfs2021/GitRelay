@@ -92,7 +92,7 @@ export default function (pi: ExtensionAPI) {
         if (selected === undefined) return;
         const tree = candidates[options.indexOf(selected)];
         if (!tree) return;
-        if (!(await ctx.ui.confirm("删除 worktree？", `${JSON.stringify(tree.path)}\n只删除干净的工作区，保留分支；未提交或未跟踪文件会阻止删除。`))) return;
+        if (!(await ctx.ui.confirm("删除 worktree？", `${JSON.stringify(tree.path)}\n只删除干净的工作区，保留分支；未提交或未跟踪文件会阻止删除，但 Git 忽略的文件（如 .env、build/）会一并删除，请先备份。`))) return;
         await removeWorktree(ctx.cwd, tree.path);
         ctx.ui.notify(`已删除 worktree：${JSON.stringify(tree.path)}（分支已保留）`, "info");
       } catch (error) {

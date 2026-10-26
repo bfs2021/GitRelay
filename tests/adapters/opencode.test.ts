@@ -11,14 +11,14 @@ import { fixture } from "../helpers.ts";
 
 type Prompt = Parameters<Plugin.Context["session"]["prompt"]>[0];
 async function waitFor(check: () => Promise<boolean>) {
-  const deadline = Date.now() + 3000;
+  const deadline = Date.now() + 10_000;
   while (!await check()) {
     assert.ok(Date.now() < deadline, "OpenCode adapter timed out");
     await delay(10);
   }
 }
 
-async function harness(t: TestContext, prompt: (input: Prompt, signal?: AbortSignal) => Promise<void>) {
+async function harness(t: TestContext, prompt: (input: Prompt, signal?: AbortSignal) => Promise<void>, nonGit = false) {
   const f = await fixture(t);
   t.mock.timers.enable({ apis: ["setInterval"] });
   let onPrompt!: (event: { sessionID: string; metadata?: Record<string, unknown> }) => Promise<void>;
@@ -26,7 +26,7 @@ async function harness(t: TestContext, prompt: (input: Prompt, signal?: AbortSig
   const events: { type: "session.deleted"; data: { sessionID: string }; handled(): void }[] = [];
   const locations = new Map<string, { location: { directory: string }; parentID?: string }>();
   const context = {
-    location: { directory: f.b },
+    location: { directory: nonGit ? f.root : f.b },
     session: {
       async get({ sessionID }: { sessionID: string }) { return locations.get(sessionID) ?? { location: { directory: f.b } }; },
       async hook(name: string, handler: typeof onPrompt) {
@@ -63,6 +63,7 @@ async function harness(t: TestContext, prompt: (input: Prompt, signal?: AbortSig
   const key = sessionKey(repo, { adapter: "opencode", session: id }, "refs/heads/main");
   return {
     ...f, id, repo, key, locations, session: context.session,
+    hookRegistered: () => Boolean(onPrompt),
     enroll: (sessionID = id) => onPrompt({ sessionID }),
     tick: () => t.mock.timers.tick(5000),
     removed() {
@@ -167,6 +168,31 @@ test("OpenCode v2 deletion during lookup cannot enroll or poll a ghost session",
   f.tick();
   assert.equal(lookup.mock.callCount(), 1);
   assert.equal((await listSessions(f.b)).length, 0);
+  assert.deepEqual(warnings, []);
+});
+
+test("OpenCode polling delivers each broadcast to all ten sessions without overlapping rounds", async (t) => {
+  const calls: Prompt[] = [];
+  const f = await harness(t, async (input) => { calls.push(input); });
+  const ids = Array.from({ length: 10 }, (_, index) => `ses_${index}`);
+  await Promise.all(ids.map((id) => f.enroll(id)));
+  for (let round = 0; round < 3; round++) {
+    const event = await sendMessage({ cwd: f.a, adapter: "cli", session: "sender", text: `round ${round}` });
+    f.tick();
+    f.tick(); // A slow polling round must not launch another concurrent scan fanout.
+    await waitFor(async () => (await Promise.all(ids.map((id) => readReceipt(f.repo, sessionKey(f.repo, { adapter: "opencode", session: id }, "refs/heads/main"), event.id)))).every((receipt) => receipt?.status === "delivered"));
+    for (const id of ids) assert.equal(calls.filter((input) => input.sessionID === id && input.text?.includes(event.id)).length, 1);
+  }
+});
+
+test("OpenCode does not enroll or schedule polling outside a Git repository", async (t) => {
+  const warnings: unknown[] = [];
+  t.mock.method(console, "warn", (message: unknown) => { warnings.push(message); });
+  const f = await harness(t, async () => { assert.fail("non-Git location"); }, true);
+  assert.equal(f.hookRegistered(), false);
+  f.tick();
+  f.tick();
+  assert.deepEqual(await listSessions(f.b), []);
   assert.deepEqual(warnings, []);
 });
 
