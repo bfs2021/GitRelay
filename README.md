@@ -1,155 +1,157 @@
 # Worktree Relay
 
-多个 coding agent 在同一项目的不同 Git worktree 中并行开发时，将主分支变更自动送给也在修改相关文件的 agent。
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-npm 包名为 `worktree-relay`，提供同名 CLI，并保留 `worktree-sync` 和 pi `/worktree` 命令兼容已有配置。Git 检测核心不依赖 pi，也可由 Claude Code、Codex、Cursor、OpenCode v2 和其他宿主复用。无运行时依赖，需要 Node.js 22.19+ 和 Git。
+Automatically deliver main-branch changes to coding agents working on related files in different Git worktrees of the same project.
 
-原 `pi-git-worktree` 用户需将安装源改为新包或新目录；状态目录、`WORKTREE_SYNC_*` 环境变量和会话身份保持不变，不迁移或清空既有消息。下面示例继续使用兼容命令 `worktree-sync`，也可等价替换为 `worktree-relay`。
+The npm package is named `worktree-relay`, with a matching CLI. The `worktree-sync` CLI alias and pi's `/worktree` command remain available for existing configurations. The Git detection core is independent of pi and can also be used by Claude Code, Codex, Cursor, OpenCode v2, and other hosts. There are no runtime dependencies; Node.js 22.19+ and Git are required.
 
-## 工作方式
+Existing `pi-git-worktree` users should update their installation source to the new package or directory. The state directory, `WORKTREE_SYNC_*` environment variables, and session identities remain unchanged; existing messages are not migrated or cleared. The examples below use the compatibility command `worktree-sync`, which can be replaced with `worktree-relay`.
+
+## How it works
 
 ```text
-A 合入 main
-  → 任意接收端发现共享 Git ref 更新
-  → 发布到用户目录中的仓库共享事件存储
-  → B/C 独立检查文件交集，生成相关 diff
-  → 各平台适配器向 agent 会话注入上下文或 follow-up
-  → B/C 分别记录回执，互不消费对方的消息
+A merges into main
+  → Any receiver detects an update to the shared Git ref
+  → An event is published to the repository's shared user-level store
+  → B/C independently check file overlap and generate relevant diffs
+  → Each platform adapter injects context or a follow-up into its agent session
+  → B/C record separate receipts without consuming each other's messages
 ```
 
-不是给人弹提示后等人转述，也不会自动覆盖文件、merge 或 rebase。默认无需常驻进程，也可启用可选 daemon 集中监控与清理；各平台共用用户级消息层，既能分享上游变更，也能主动发布跨 agent 协调消息。
+Events go directly to agent sessions rather than asking a human to relay a notification. Worktree Relay does not automatically overwrite files, merge, or rebase. No daemon is required by default; an optional daemon provides centralized monitoring and cleanup. All platforms share the same user-level messaging layer for both upstream changes and explicit cross-agent coordination messages.
 
-首次运行建立主分支基线；之后只投递相关更新。普通 merge、fast-forward、squash、直接提交均可感知。常规 first-parent 前进逐个检查，不遗漏两次轮询之间先修改后还原的文件；旧位置不在当前 first-parent 链上时只比较前后快照，不重放已有变更。
+The first check establishes a baseline on the monitored branch; subsequent checks deliver relevant updates. Ordinary merges, fast-forwards, squash merges, and direct commits are supported. Normal first-parent advances are inspected commit by commit, so edits reverted between polls are still detected. If the previous position is not on the current first-parent chain, only the before/after snapshots are compared, without replaying changes already present.
 
-## 平台支持
+## Platform support
 
-| 平台 | 入口 | 投递时机 |
+| Platform | Entry point | Delivery |
 | --- | --- | --- |
-| pi | `src/adapters/pi/` | 每 5 秒；忙时排队，空闲时自动触发 agent |
-| Claude Code | `src/adapters/claude-code/hooks.json` | lifecycle hooks 注入；Stop 可请求继续 |
-| Codex | `src/adapters/codex/hooks.json` | 支持 hooks 的版本中注入；Stop 可请求继续 |
-| Cursor | `src/adapters/cursor/hooks.json` | 工具结束后注入；completed stop 可跟进 |
-| OpenCode v2 | `src/adapters/opencode/` | 每 5 秒检查；宿主持久队列，忙时排队、空闲时唤醒 |
-| 通用宿主 | `worktree-sync check/watch` | JSON / NDJSON，由宿主负责会话路由 |
+| pi | `src/adapters/pi/` | Every 5 seconds; queued while busy, automatically starts the agent when idle |
+| Claude Code | `src/adapters/claude-code/hooks.json` | Lifecycle hook injection; Stop can request continuation |
+| Codex | `src/adapters/codex/hooks.json` | Injection in versions supporting hooks; Stop can request continuation |
+| Cursor | `src/adapters/cursor/hooks.json` | Injection after tools; a completed stop can request a follow-up |
+| OpenCode v2 | `src/adapters/opencode/` | Every 5 seconds through the host's durable queue; queued while busy, wakes idle sessions |
+| Other hosts | `worktree-sync check/watch` | JSON / NDJSON, routed to the session by the host |
 
-**Hooks 不能唤醒已经空闲的会话。** pi/OpenCode 原生适配器才包含轮询及主动触发。各平台的接口版本、安装步骤和完整边界见 [接入指南](docs/integrations.md)。
+**Hooks cannot wake an already idle session.** Only the native pi/OpenCode adapters include polling and automatic wake-up. See the [integration guide](docs/integrations.md) for platform versions, installation steps, and limitations. The detailed guides in `docs/` are currently in Chinese.
 
-## 安装与使用
+## Installation and usage
 
 ### pi
 
 ```sh
 pi install /absolute/path/to/worktree-relay
-# 重启或 /reload；每个 worktree 都加载本扩展。
+# Restart or /reload; load the extension in every worktree.
 ```
 
-默认监控本地 `refs/heads/main`，仅在 TUI/RPC 模式自动运行：
+By default, the extension monitors the local `refs/heads/main` and runs automatically only in TUI/RPC modes:
 
 ```sh
 pi --worktree-main-ref refs/heads/develop
 pi --worktree-watch=false
 ```
 
-### 其他 agent 与 CLI
+### Other agents and the CLI
 
 ```sh
 npm install -g /absolute/path/to/worktree-relay
 worktree-sync --help
 
-# 首次调用建立基线；相同会话复用同一 ID。
+# The first call establishes a baseline; reuse the same ID for the same session.
 worktree-sync check --cwd /path/to/worktree --session my-agent-session
 worktree-sync watch --cwd /path/to/worktree --session my-agent-session
 ```
 
-按 [接入指南](docs/integrations.md) 合并相应 hooks，或加载 OpenCode 插件。默认不会自动 fetch；监控 `refs/remotes/origin/main` 时需由外部负责更新远端跟踪引用。
+Follow the [integration guide](docs/integrations.md) to merge the appropriate hooks or load the OpenCode plugin. Worktree Relay does not fetch automatically. When monitoring `refs/remotes/origin/main`, an external process must update the remote-tracking ref.
 
-### 跨 coding agent 共享消息
+### Cross-agent messages
 
-默认状态目录：`~/.local/state/worktree-agent-sync/repos/<repo-id>/`，支持 `XDG_STATE_HOME` 和绝对路径覆盖 `WORKTREE_SYNC_STATE_DIR`。同一仓库的 worktree 共享事件，不同 clone 按 Git common directory 的真实路径隔离。
+The default state directory is `~/.local/state/worktree-agent-sync/repos/<repo-id>/`. It supports `XDG_STATE_HOME` and an absolute-path override through `WORKTREE_SYNC_STATE_DIR`. Worktrees of the same repository share events; separate clones are isolated by the real path of their Git common directory.
 
 ```sh
-# 接收方先通过原生插件/hooks 或 check 登记会话。
+# Register the receiving session through its native plugin/hooks or a check first.
 worktree-sync check --cwd /project/worktree-B --agent codex --session codex-B
 
-# Claude Code 的 agent 在自己的 worktree 发布消息。
+# A Claude Code agent publishes a message from its own worktree.
 worktree-sync send --cwd /project/worktree-A --agent claude-code --session claude-A \
-  --file src/config.ts --message '接口约定有变化，请评估是否需要适配。'
+  --file src/config.ts --message 'The API contract changed; assess whether your task needs adaptation.'
 
 worktree-sync sessions --cwd /project/worktree-A
 ```
 
-`send` 只发送，不建立接收订阅；发送方需要收件时应先通过插件/hooks、`check` 或 `join` 登记。`--file` 可重复；省略时广播给其他已登记会话，提供时只投递给当前有同路径修改的工作区。新会话不补收加入前的广播。完整目录结构、回执语义和迁移说明见 [共享消息指南](docs/shared-messages.md)。
+`send` only publishes a message; it does not create a receiving subscription. Senders that also need to receive messages should register through their plugin or hooks, `check`, or `join`. Repeat `--file` to scope a message to multiple paths. Without it, the message is broadcast to other registered sessions; with it, only worktrees currently modifying matching paths receive it. New sessions do not receive broadcasts published before they joined. See the [shared messaging guide](docs/shared-messages.md) for the store layout, receipt semantics, and migration details.
 
-### 会话退出、清理和可选 daemon
+### Leaving sessions, cleanup, and the optional daemon
 
 ```sh
 worktree-sync leave --agent codex --session codex-B --cwd /project/worktree-B
 worktree-sync join  --agent codex --session codex-B --cwd /project/worktree-B
 
-worktree-sync gc --cwd /project/worktree-A          # 默认预览，保留期 7 天
-worktree-sync gc --cwd /project/worktree-A --apply  # 只删除所有接收者已确认的过期事件
+worktree-sync gc --cwd /project/worktree-A          # Preview only; default retention is 7 days
+worktree-sync gc --cwd /project/worktree-A --apply  # Remove expired events acknowledged by all recipients
 
-worktree-sync daemon        # 可选，集中监控已登记仓库；启动时及每小时安全清理
+worktree-sync daemon        # Optional centralized monitoring; safe cleanup at startup and hourly
 worktree-sync daemon status
 ```
 
-退出不会确认未读消息，普通关闭/重载仍视为离线；清理保留未读事件、会话和监控位置。daemon 停止或失效时，接收端自动回退自行监控。详情见 [维护指南](docs/maintenance.md)，验收范围见 [验收记录](docs/acceptance.md)。
+Leaving does not acknowledge unread messages. Ordinary shutdowns and reloads are treated as offline time, not a permanent opt-out. Cleanup preserves unread events, session records, and monitoring positions. Receivers fall back to local monitoring if the daemon stops or becomes unavailable. See the [maintenance guide](docs/maintenance.md) and [acceptance results](docs/acceptance.md) for details and verification scope.
 
 ### Skills
 
-[`skills/worktree-coordination/SKILL.md`](skills/worktree-coordination/SKILL.md) 指导 agent 重读本地状态、检查完整 diff、判断影响、保护未完成修改和验证适配结果。pi 安装时自动加载；其他平台可安装到各自 skills 目录。
+[`skills/worktree-coordination/SKILL.md`](skills/worktree-coordination/SKILL.md) guides agents to re-read local state, inspect full diffs, assess impact, protect unfinished work, and verify adaptations. It is loaded automatically when installed in pi; other platforms can install it in their own skills directories.
 
-## pi worktree 管理
+## Managing worktrees in pi
 
-| 命令 | 功能 |
+| Command | Purpose |
 | --- | --- |
-| `/worktree` | 操作菜单 |
-| `/worktree list` | 路径、分支、提交和状态 |
-| `/worktree add` | 新建分支或使用已有本地分支，可指定新分支起点 |
-| `/worktree remove` | 二次确认后删除工作区，保留分支 |
-| `/worktree leave` | 显式停止当前会话订阅，保留未读消息 |
-| `/worktree join` | 显式重新加入并启动接收器 |
+| `/worktree` | Open the action menu |
+| `/worktree list` | Show paths, branches, commits, and status |
+| `/worktree add` | Create a branch or use an existing local branch; optionally choose a starting point for a new branch |
+| `/worktree remove` | Remove a worktree after confirmation, keeping its branch |
+| `/worktree leave` | Explicitly stop the current session's subscription, preserving unread messages |
+| `/worktree join` | Explicitly rejoin and start the receiver |
 
-路径在对话框填写，支持空格、中文和绝对路径；相对路径以当前 pi 目录为基准，不展开 `~` 或环境变量。创建后在新目录另启 agent，不改变当前 pi 会话目录。起点存在同名分支和标签时拒绝猜测，请使用 `refs/heads/...` 或 `refs/tags/...` 完整引用。
+Paths are entered in dialogs and support spaces, Unicode, and absolute paths. Relative paths are resolved against pi's current directory; `~` and environment variables are not expanded. Start another agent in the new directory after creation; the current pi session's directory does not change. If a starting point matches both a branch and a tag, the command refuses to guess: use a fully qualified `refs/heads/...` or `refs/tags/...` ref.
 
-删除不使用 `--force`，拒绝删除主工作区、锁定工作区及当前 pi 所在 worktree（含子目录/符号链接入口）。修改、暂存或未跟踪文件由 Git 阻止删除；**被 Git 忽略的文件仍可能被一起删除，请自行备份**。其他 agent 进程所在目录不在此删除保护范围内。
+Removal never uses `--force` and refuses to remove the primary worktree, locked worktrees, or the worktree containing the current pi session, including subdirectory and symlink entry points. Git blocks removal when tracked files are modified or staged, or when untracked files are present. **Git-ignored files may still be deleted with the worktree; back them up first.** This protection does not cover directories used by other agent processes.
 
-## 项目结构
+## Project layout
 
 ```text
 src/
 ├── core/
-│   ├── git.ts             # Git/worktree 操作
-│   ├── changes.ts         # 文件交集、提交范围、diff、事件格式
-│   ├── store.ts           # 用户状态目录、仓库身份、原子写入和锁
-│   ├── mailbox.ts         # 会话登记、广播事件和消息格式
-│   ├── publisher.ts       # 共享 ref 同步与事件链
-│   ├── sessions.ts        # 显式加入/退出订阅
-│   ├── cleanup.ts         # 确认事件清理与中断恢复
-│   ├── daemon-state.ts    # 单实例心跳与回退判断
-│   ├── daemon.ts          # 可选多仓库监控及定期清理
-│   └── consumer.ts        # 相关性筛选、独立回执与 daemon 委托
+│   ├── git.ts             # Git/worktree operations
+│   ├── changes.ts         # File overlap, commit ranges, diffs, and event formatting
+│   ├── store.ts           # User-level state, repository identity, atomic writes, and locks
+│   ├── mailbox.ts         # Session registration, broadcasts, and message formatting
+│   ├── publisher.ts       # Shared ref synchronization and event chains
+│   ├── sessions.ts        # Explicit subscription join/leave
+│   ├── cleanup.ts         # Acknowledged-event cleanup and interruption recovery
+│   ├── daemon-state.ts    # Singleton heartbeat and fallback checks
+│   ├── daemon.ts          # Optional multi-repository monitoring and periodic cleanup
+│   └── consumer.ts        # Relevance filtering, independent receipts, and daemon delegation
 ├── adapters/
-│   ├── pi/                # 原生命令、生命周期、follow-up
-│   ├── claude-code/       # lifecycle hook 配置
-│   ├── codex/             # lifecycle hook 配置
-│   ├── cursor/            # hook 配置
-│   ├── opencode/          # v2 Promise 插件、会话登记与持久队列投递
-│   └── hooks.ts           # hook 输入校验和协议转换
-└── cli/main.ts            # 通用 CLI / hook runner
-scripts/build.mjs            # 用 Node 内置类型擦除生成可发布 JS
-scripts/benchmark.mjs        # 隔离事件存储的规模基准
-.github/workflows/check.yml  # macOS/Linux、Node 22.19/24 验证
-dist/                        # 构建产物（不提交）
+│   ├── pi/                # Native commands, lifecycle, and follow-ups
+│   ├── claude-code/       # Lifecycle hook configuration
+│   ├── codex/             # Lifecycle hook configuration
+│   ├── cursor/            # Hook configuration
+│   ├── opencode/          # V2 Promise plugin, session enrollment, and durable queue delivery
+│   └── hooks.ts           # Hook input validation and protocol conversion
+└── cli/main.ts            # Generic CLI / hook runner
+scripts/build.mjs           # Publishable JS using Node's built-in type stripping
+scripts/benchmark.mjs       # Isolated event-store scale benchmark
+.github/workflows/check.yml # macOS/Linux checks on Node 22.19/24
+dist/                       # Build output (not committed)
 skills/worktree-coordination/
 docs/integrations.md
 tests/{core,adapters,cli}/
-index.ts                    # 旧 pi 加载路径兼容入口
+index.ts                    # Compatibility entry point for older pi loading paths
 ```
 
-核心只依赖 Node 标准库和本机 Git。添加平台适配器不需要更改 Git 检测逻辑；不为未来扩展引入 monorepo 或发布多个包。
+The core uses only Node's standard library and local Git. Adding a platform adapter does not require changing the Git detection logic. The project avoids a monorepo or multiple published packages for hypothetical future needs.
 
-## 测试与边界
+## Testing and limitations
 
 ```sh
 npm ci --ignore-scripts
@@ -159,10 +161,10 @@ npm pack --dry-run
 npm run benchmark
 ```
 
-类型检查覆盖核心、适配器和测试，构建方式不变。TypeScript、Node 与宿主类型只属于开发依赖；pi 的开发依赖中固定覆盖已修复的 `undici`，不新增运行时依赖。CI 在 macOS/Linux 的 Node `22.19.0` 和 `24` 上运行类型检查、测试、打包预检。
+Typechecking covers the core, adapters, and tests without changing the build process. TypeScript, Node types, and host types are development dependencies only. The pi development dependency pins a patched `undici` through an override, without adding runtime dependencies. CI runs typechecking, tests, and a package dry-run on macOS/Linux with Node `22.19.0` and `24`.
 
-性能基准使用 3 个会话、100/1,000/10,000 个保留广播事件，对比有无 daemon 的空轮询与 32 条离线消息恢复；不读取用户消息、不调用模型。结果和限制见 [性能记录](docs/performance.md)。
+The benchmark uses 3 sessions and 100/1,000/10,000 retained broadcasts. It compares idle polling and recovery of 32 offline messages with and without the daemon. It does not read user messages or call a model. See the [performance results](docs/performance.md) for measurements and limitations.
 
-测试使用临时仓库和隔离状态目录，覆盖多 worktree 合并、文件交集、路径规范化、first-parent 非连续历史、改后还原、重命名、大 diff、历史改写、跨 agent 广播、独立回执、旧状态迁移、并发重试、pi 排队去重、OpenCode v2 持久队列与取消、各 hook 协议及独立 CLI 进程间通信。已在本机 pi `1.4.0`、Codex CLI `0.164.0`、Claude Code `2.1.310`、OpenCode `2.1.2` 验证真实模型收件与去重，详见 [验收记录](docs/acceptance.md)。这不代表其他版本或 Cursor 已通过真实验收。
+Tests use temporary repositories and isolated state directories. They cover multi-worktree merges, file overlap, path normalization, non-contiguous first-parent history, reverted edits, renames, large diffs, rewritten history, cross-agent broadcasts, independent receipts, legacy migration, concurrent retries, pi queue deduplication, OpenCode v2 durable queues and cancellation, hook protocols, and communication between separate CLI processes. Real-model receipt and deduplication have been verified locally with pi `1.4.0`, Codex CLI `0.164.0`, Claude Code `2.1.310`, and OpenCode `2.1.2`; see the [acceptance results](docs/acceptance.md) for the tested builds and scope. This does not imply verification of other versions or Cursor.
 
-这是文件级变更感知，不是语义冲突检测或同步引擎。无事件不代表没有跨文件影响；事件送达也不代表 agent 已完成适配。正常运行去重，崩溃边界允许重发；CLI/hooks 输出成功后确认投递，宿主是否实际接收需要宿主确认。只清理所有接收者已确认、超过保留期的事件；未读消息和关闭标记保留。daemon 不会突破宿主的空闲唤醒限制。更多限制与恢复步骤见 [接入指南](docs/integrations.md#状态恢复和限制)。
+Worktree Relay provides file-level change awareness, not semantic conflict detection or synchronization. The absence of an event does not rule out cross-file effects, and delivery does not mean an agent has completed its adaptation. Normal operation deduplicates events, but crashes may cause redelivery. CLI/hooks acknowledge successful output; the host must confirm actual acceptance. Only events acknowledged by all recipients and past their retention period are collected; unread messages and closed-session markers are preserved. The daemon does not bypass a host's idle wake-up limitations. See the [integration guide](docs/integrations.md#状态恢复和限制) for more limitations and recovery procedures.
