@@ -1,62 +1,62 @@
-# Worktree Relay 性能基准
+# GitRelay performance benchmarks
 
-## 复验
+## Reproduce
 
 ```sh
 npm run benchmark
 ```
 
-脚本创建并最终删除临时 Git 仓库、3 个接收 worktree 和独立状态目录；不读取用户消息、不安装服务、不调用模型。运行前需要本机 Git 和 Node.js 22.19+。不把性能基准放进 CI，以免共享 runner 的负载造成误判。
+The script creates and removes a temporary Git repository, three receiver worktrees, and an isolated state directory. It does not read user messages, install services, or call models. Requires local Git and Node.js 22.19+. Benchmarks are excluded from CI because shared-runner load can distort results.
 
-固定场景：
+Fixed scenario:
 
-- 保留 100、1,000、10,000 个广播消息，每个消息有 3 个接收者和各自的合法回执。
-- 事件与回执准备不计时；同一进程顺序测量，使用操作系统暖文件缓存。
-- 空轮询：顺序检查全部 3 个会话，重复 3 次，报告中位数。
-- 离线恢复：撤销一个接收者最后 32 条消息的回执，测量四批消费并重新持久确认的总耗时。不是从零恢复全部 10,000 条消息。
-- daemon 对比使用真实 `runDaemon`，等待首轮监控/清理完成；检查结束时断言其仍存活。已确认事件仍在 7 天保留期内，不因开 daemon 而减少数据集。
-- 断言空轮询无投递、恢复恰好 32 个不同 ID、再次消费无重复，以及所有成功回执均已写入。最后停止 daemon 并恢复环境变量。
+- Retain 100, 1,000, or 10,000 broadcasts, each with three recipients and valid individual receipts.
+- Exclude event/receipt preparation from timing. Measure sequentially in one process with warm OS file caches.
+- Empty polling: check all three sessions sequentially, repeat three times, report the median.
+- Offline recovery: revoke one recipient's last 32 receipts, then measure four consumption/persistent-acknowledgement batches. This is not recovery of all 10,000 messages from scratch.
+- Daemon comparisons use real `runDaemon`, wait for initial monitoring/cleanup, and assert it remains alive. Acknowledged events remain within seven-day retention, so enabling the daemon does not shrink the dataset.
+- Assert no empty-poll delivery, exactly 32 unique recovery IDs, no repeat delivery, and persistence of all successful receipts. Stop the daemon and restore environment variables afterward.
 
-## 初始本机结果
+## Initial local results
 
-2026-10-25 UTC，macOS arm64，Node `22.23.2`，Git `2.54.0 (Apple Git-157)`。单位均为毫秒，四舍五入。
+2026-10-25 UTC, macOS arm64, Node `22.23.2`, Git `2.54.0 (Apple Git-157)`. Values are rounded milliseconds.
 
-| 保留事件 | daemon | 3 会话空轮询中位数 | 1 会话恢复 32 条 |
+| Retained events | Daemon | Median empty poll, 3 sessions | Recover 32, 1 session |
 | ---: | :---: | ---: | ---: |
-| 100 | 关 | 224 | 518 |
-| 100 | 开 | 332 | 418 |
-| 1,000 | 关 | 1,156 | 588 |
-| 1,000 | 开 | 401 | 466 |
-| 10,000 | 关 | 4,398 | 4,620 |
-| 10,000 | 开 | 4,212 | 7,314 |
+| 100 | Off | 224 | 518 |
+| 100 | On | 332 | 418 |
+| 1,000 | Off | 1,156 | 588 |
+| 1,000 | On | 401 | 466 |
+| 10,000 | Off | 4,398 | 4,620 |
+| 10,000 | On | 4,212 | 7,314 |
 
-同机前一轮的 10,000 事件空轮询为 4,178 / 4,116 ms，恢复为 4,534 / 4,525 ms。后台负载与磁盘缓存会造成波动；离线恢复单次测量，不用于声称 daemon 一定更快。
+The preceding run on the same machine measured 4,178 / 4,116 ms for 10,000-event empty polling and 4,534 / 4,525 ms for recovery. Background load and disk caches cause variation. Recovery is a single measurement, not evidence that the daemon is always faster.
 
-## 本次优化前后对照
+## Before and after optimization
 
-同一台 macOS arm64、Node `22.23.2`、Git `2.54.0 (Apple Git-157)`，沿用上述脚本与数据规模，未改变基准或减少保留事件。单位为毫秒，保留一位小数。
+Same machine, runtime, script, and dataset sizes; no benchmark change or reduction in retained events. Values are milliseconds to one decimal place.
 
-| 保留事件 | daemon | 空轮询：优化前 | 空轮询：优化后 | 恢复 32 条：优化前 | 恢复 32 条：优化后 |
+| Retained events | Daemon | Empty poll before | Empty poll after | Recover 32 before | Recover 32 after |
 | ---: | :---: | ---: | ---: | ---: | ---: |
-| 100 | 关 | 137.8 | 119.1 | 173.7 | 164.4 |
-| 100 | 开 | 82.9 | 60.5 | 108.0 | 119.7 |
-| 1,000 | 关 | 465.4 | 255.4 | 522.2 | 284.4 |
-| 1,000 | 开 | 419.3 | 116.3 | 463.9 | 178.0 |
-| 10,000 | 关 | 4,065.2 | 846.8 | 4,443.4 | 1,026.0 |
-| 10,000 | 开 | 4,086.0 | 767.6 | 4,374.2 | 984.2 |
+| 100 | Off | 137.8 | 119.1 | 173.7 | 164.4 |
+| 100 | On | 82.9 | 60.5 | 108.0 | 119.7 |
+| 1,000 | Off | 465.4 | 255.4 | 522.2 | 284.4 |
+| 1,000 | On | 419.3 | 116.3 | 463.9 | 178.0 |
+| 10,000 | Off | 4,065.2 | 846.8 | 4,443.4 | 1,026.0 |
+| 10,000 | On | 4,086.0 | 767.6 | 4,374.2 | 984.2 |
 
-优化后复跑：10,000 事件空轮询为 774.1 / 865.2 ms（daemon 关 / 开），恢复为 1,139.8 / 1,079.3 ms。两轮均通过去重、回执、未读恢复和 daemon 存活自校验。10,000 事件的空轮询耗时约减少 79%～81%，恢复耗时约减少 74%～78%；小规模恢复存在波动，不声称所有场景都更快。
+A repeat after optimization measured 774.1 / 865.2 ms for 10,000-event empty polling (daemon off/on) and 1,139.8 / 1,079.3 ms for recovery. Both runs passed deduplication, receipt, unread-recovery, and daemon-liveness assertions. Empty polling improved about 79–81%, recovery about 74–78%; smaller recovery cases varied, so not every scenario is claimed faster.
 
-实现仅调整读取路径：
+Only the read path changed:
 
-- 消费者持有会话锁时，先列举回执文件名，逐条读取并校验匹配回执；仅有效回执能跳过对应事件正文。不把文件存在视为成功确认，不缓存回执，不增加状态格式或迁移。
-- 每批最多并发读取 32 条，等待整批完成后再返回或抛错；仅未确认事件参与时间与 ID 排序，原有每次最多投递 8 条的规则不变。
-- GC 不使用会话过滤，仍校验全部保留事件后才进入删除流程。已确认事件正文的损坏不再由该会话轮询发现，但未确认消费者和 GC 仍会报错。
-- `npm run typecheck`、`npm test`（61/61）、`npm pack --dry-run` 通过。回归包含跨读取批次排序、损坏回执拒绝、删除回执后重投、独立收件及 GC 校验。
+- Under the session lock, enumerate receipt filenames, then read and validate matching receipts before skipping event bodies. File existence alone is not acknowledgement. No receipt cache, new state format, or migration was added.
+- Read at most 32 entries concurrently per batch and await the entire batch before returning or throwing. Sort only unacknowledged events by timestamp and ID; the eight-event delivery limit remains.
+- GC does not apply session filtering and still validates all retained events before deletion. Acknowledged event-body corruption is no longer detected by that session's polling, but unacknowledged consumers and GC still report it.
+- At the time of optimization, `npm run typecheck`, `npm test` (61/61), and `npm pack --dry-run` passed. Regressions cover ordering across read batches, corrupt-receipt rejection, redelivery after receipt deletion, independent recipients, and GC validation. These are historical results, not rerun by translating this document.
 
-## 结论与边界
+## Conclusions and limits
 
-- daemon 集中监控 Git ref，但不消除各接收会话扫描目录和读取回执的开销。本次将 10,000 事件的 3 会话空轮询从约 4 秒降至约 0.8 秒；仍是线性扫描，不能据此宣称支持大量会话和无限积压。
-- 正常使用先检查 `sessions` 与 `gc` 预览，按原有安全规则清理已确认事件；不要通过强删未读消息或自动淘汰离线会话换取速度。默认不启动 daemon 的用户需显式运行维护。
-- 本次不引入数据库、队列服务或事件索引。若目录与回执扫描仍成为真实负载下的瓶颈，再评估兼容现有 GC/回执语义的索引；不通过丢弃未读事件或跳过回执校验换速度。
-- 基准仅测广播消息存储扫描，不覆盖大规模仓库、长提交历史、巨大文件列表、冷缓存或多进程争锁；不能据此推断这些场景的延迟。
+- The daemon centralizes Git-ref monitoring but does not eliminate per-session directory/receipt scans. Three-session empty polling at 10,000 events fell from about four seconds to 0.8 seconds. It remains linear and does not establish support for unlimited backlog or large session counts.
+- Inspect `sessions` and a `gc` preview, then safely collect acknowledged events. Do not delete unread messages or expire offline sessions for speed. Without the optional daemon, maintenance is explicit.
+- No database, queue service, or event index was introduced. Consider an index compatible with receipt/GC semantics only if scans remain a measured bottleneck, without dropping unread events or skipping receipt validation.
+- This benchmark measures broadcast-storage scans, not huge repositories, long histories, enormous file lists, cold caches, or multi-process lock contention. It does not establish latency for those cases.
