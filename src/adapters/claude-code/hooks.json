@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "worktree-sync hook claude-code",
+            "command": "git-relay hook claude-code",
             "timeout": 60
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "worktree-sync hook claude-code",
+            "command": "git-relay hook claude-code",
             "timeout": 60
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "worktree-sync hook claude-code",
+            "command": "git-relay hook claude-code",
             "timeout": 60
           }
         ]
@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "worktree-sync hook claude-code",
+            "command": "git-relay hook claude-code",
             "timeout": 60
           }
         ]

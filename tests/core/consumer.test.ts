@@ -39,7 +39,7 @@ test("abandoned locks are reported without deleting another process's state", as
   const directory = join((await repository(f.b)).directory, "sessions");
   const cursor = (await readdir(directory)).find((name) => name.endsWith(".json"))!;
   await writeFile(join(directory, cursor.replace(/\.json$/, ".lock")), JSON.stringify({ pid: 2_000_000_000 }));
-  await assert.rejects(consumeChanges(options), /Stale worktree-sync lock/);
+  await assert.rejects(consumeChanges(options), /Stale git-relay lock/);
   assert.ok((await readdir(directory)).includes(cursor));
 });
 

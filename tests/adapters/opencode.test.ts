@@ -64,7 +64,7 @@ async function harness(t: TestContext, prompt: (input: Prompt, signal?: AbortSig
   return {
     ...f, id, repo, key, locations, session: context.session,
     hookRegistered: () => Boolean(onPrompt),
-    enroll: (sessionID = id) => onPrompt({ sessionID }),
+    enroll: (sessionID = id, metadata?: Prompt["metadata"]) => onPrompt({ sessionID, metadata }),
     tick: () => t.mock.timers.tick(5000),
     removed() {
       const done = Promise.withResolvers<void>();
@@ -80,6 +80,9 @@ async function harness(t: TestContext, prompt: (input: Prompt, signal?: AbortSig
 test("OpenCode v2 queues durable input, wakes idle sessions and does not recursively enroll", async (t) => {
   const calls: Prompt[] = [];
   const f = await harness(t, async (input) => { calls.push(input); });
+  await f.enroll(f.id, { source: "worktree-relay" });
+  await f.enroll(f.id, { source: "git-relay" });
+  assert.equal((await listSessions(f.b)).length, 0);
   await writeFile(join(f.b, "shared.txt"), "local\n");
   await f.enroll();
   assert.equal(calls.length, 0);
@@ -89,7 +92,7 @@ test("OpenCode v2 queues durable input, wakes idle sessions and does not recursi
   assert.equal(calls[0].sessionID, f.id);
   assert.equal(calls[0].delivery, "queue");
   assert.match(calls[0].text!, /shared.txt/);
-  assert.deepEqual(calls[0].metadata, { source: "worktree-relay" });
+  assert.deepEqual(calls[0].metadata, { source: "git-relay" });
   assert.equal((await listSessions(f.b)).length, 1);
   const lastSeen = (await listSessions(f.b))[0].lastSeen;
   f.tick();

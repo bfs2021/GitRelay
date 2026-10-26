@@ -1,15 +1,24 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { cp, access } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { fixture } from "../helpers.ts";
+
+const exec = promisify(execFile);
 
 const read = (path: string) => readFile(new URL(`../../${path}`, import.meta.url), "utf8");
 
 test("package exposes portable CLI, pi resources and the shared coordination skill", async () => {
   const manifest = JSON.parse(await read("package.json"));
-  assert.equal(manifest.name, "worktree-relay");
-  assert.equal(manifest.bin["worktree-relay"], "./dist/cli/main.js");
-  assert.equal(manifest.bin["worktree-sync"], manifest.bin["worktree-relay"]);
-  assert.match(await read("README.md"), /^# Worktree Relay\n/);
+  assert.equal(manifest.name, "git-relay");
+  assert.equal(manifest.bin["git-relay"], "./dist/cli/main.js");
+  assert.equal(manifest.bin["worktree-relay"], manifest.bin["git-relay"]);
+  assert.equal(manifest.bin["worktree-sync"], manifest.bin["git-relay"]);
+  assert.match(await read("README.md"), /^# GitRelay\n/);
   assert.ok(await read("dist/cli/main.js"));
   for (const name of ["publisher", "sessions", "cleanup", "daemon-state", "daemon"]) assert.ok(await read(`dist/core/${name}.js`));
   for (const name of ["maintenance", "acceptance"]) assert.ok(await read(`docs/${name}.md`));
@@ -21,7 +30,38 @@ test("package exposes portable CLI, pi resources and the shared coordination ski
   for (const agent of ["claude-code", "codex", "cursor"]) {
     const hooks = JSON.parse(await read(`src/adapters/${agent}/hooks.json`));
     assert.ok(hooks.hooks);
-    assert.ok(JSON.stringify(hooks).includes(`worktree-sync hook ${agent}`));
+    assert.ok(JSON.stringify(hooks).includes(`git-relay hook ${agent}`));
   }
   assert.match(await read("index.ts"), /src\/adapters\/pi\/index.ts/);
+});
+
+test("Codex plugin bundles its runtime and runs hooks from an installed path containing spaces", { skip: process.platform === "win32" }, async (t) => {
+  const f = await fixture(t);
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  await exec(process.execPath, [join(root, "scripts/build-codex-plugin.mjs")]);
+  const installed = join(f.root, "installed plugin");
+  await cp(join(root, ".codex/plugin-build"), installed, { recursive: true });
+  const plugin = JSON.parse(await readFile(join(installed, ".codex-plugin/plugin.json"), "utf8"));
+  const catalog = JSON.parse(await read(".agents/plugins/marketplace.json"));
+  assert.equal(catalog.plugins[0].name, plugin.name);
+  assert.equal(plugin.interface.displayName, "GitRelay");
+  for (const key of ["logo", "composerIcon"]) {
+    const asset = await readFile(join(installed, plugin.interface[key]), "utf8");
+    assert.match(asset, /<svg\b/);
+    assert.match(asset, /viewBox="0 0 128 128"/);
+  }
+  for (const name of ["git-relay", "git-relay-sync", "git-relay-help", "worktree-coordination"]) {
+    await access(join(installed, plugin.skills, name, "SKILL.md"));
+    await access(join(installed, plugin.skills, name, "agents/openai.yaml"));
+  }
+  await access(join(installed, "docs/integrations.md"));
+  await assert.rejects(access(join(installed, "node_modules")));
+  const hooks = JSON.parse(await readFile(join(installed, plugin.hooks), "utf8"));
+  const command = hooks.hooks.SessionStart[0].hooks[0].command;
+  assert.ok(!command.includes("auto-sync"));
+  const child = exec("/bin/sh", ["-c", command], { cwd: f.b, env: { ...process.env, PLUGIN_ROOT: installed } });
+  child.child.stdin!.end(JSON.stringify({ hook_event_name: "SessionStart", session_id: "installed-plugin", cwd: f.b }));
+  const result = JSON.parse((await child).stdout);
+  assert.match(result.systemMessage, /feature\/b/);
+  assert.match(result.systemMessage, /Auto-sync.*Off/);
 });

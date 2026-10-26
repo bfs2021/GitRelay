@@ -74,7 +74,7 @@ export async function withLock<T>(path: string, run: () => Promise<T>, options: 
         if (failure.code === "ENOENT") return undefined;
         throw failure;
       });
-      if (info && !info.isFile()) throw new Error(`Invalid worktree-sync lock (not a regular file): ${path}`);
+      if (info && !info.isFile()) throw new Error(`Invalid git-relay lock (not a regular file): ${path}`);
       const owner = info ? await readJson(path).catch(() => undefined) as { pid?: number } | undefined : undefined;
       if (owner && Number.isInteger(owner.pid) && owner.pid! > 0) {
         try { process.kill(owner.pid!, 0); }
@@ -85,7 +85,7 @@ export async function withLock<T>(path: string, run: () => Promise<T>, options: 
           });
           if ((failure as NodeJS.ErrnoException).code === "ESRCH" && latest && info &&
               latest.dev === info.dev && latest.ino === info.ino && latest.mtimeMs === info.mtimeMs) {
-            throw new Error(`Stale worktree-sync lock: ${path}. Recheck the current owner before manual recovery; never remove a live lock.`);
+            throw new Error(`Stale git-relay lock: ${path}. Recheck the current owner before manual recovery; never remove a live lock.`);
           }
         }
       }

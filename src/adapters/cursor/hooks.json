@@ -3,12 +3,12 @@
   "hooks": {
     "postToolUse": [
       {
-        "command": "worktree-sync hook cursor"
+        "command": "git-relay hook cursor"
       }
     ],
     "stop": [
       {
-        "command": "worktree-sync hook cursor"
+        "command": "git-relay hook cursor"
       }
     ]
   }

@@ -6,7 +6,7 @@ import { formatNotifications } from "../../core/mailbox.ts";
 type SessionID = Parameters<Plugin.Context["session"]["get"]>[0]["sessionID"];
 
 export default {
-  id: "worktree-relay",
+  id: "git-relay",
   async setup(ctx) {
     try { await watchRoot(ctx.location.directory); }
     catch { return async () => {}; }
@@ -17,7 +17,7 @@ export default {
     let polling: Promise<void> | undefined;
     const ref = process.env.WORKTREE_MAIN_REF ?? "refs/heads/main";
     const deferred = new Error("Establish baseline without recursively prompting");
-    const warn = (error: unknown) => console.warn(`[Worktree Relay] ${error instanceof Error ? error.message : String(error)}`);
+    const warn = (error: unknown) => console.warn(`[GitRelay] ${error instanceof Error ? error.message : String(error)}`);
     const belongs = (session: Awaited<ReturnType<typeof ctx.session.get>>) => !session.parentID && session.location.directory === ctx.location.directory;
 
     function scan(id: SessionID, initial = false): Promise<void> {
@@ -30,7 +30,7 @@ export default {
           async deliver(notifications) {
             if (initial) throw deferred;
             // V2 durably admits queued input; the host handles busy sessions and idle wake-up.
-            await ctx.session.prompt({ sessionID: id, text: formatNotifications(notifications), delivery: "queue", metadata: { source: "worktree-relay" } }, { signal: state.abort.signal });
+            await ctx.session.prompt({ sessionID: id, text: formatNotifications(notifications), delivery: "queue", metadata: { source: "git-relay" } }, { signal: state.abort.signal });
           },
         });
       })().catch((error) => {
@@ -40,7 +40,7 @@ export default {
     }
 
     const registration = await ctx.session.hook("prompt", async (event) => {
-      if (abort.signal.aborted || deleted.has(event.sessionID) || event.metadata?.source === "worktree-relay") return;
+      if (abort.signal.aborted || deleted.has(event.sessionID) || event.metadata?.source === "git-relay" || event.metadata?.source === "worktree-relay") return;
       try {
         if (!sessions.has(event.sessionID)) {
           const session = await ctx.session.get({ sessionID: event.sessionID }, { signal: abort.signal });

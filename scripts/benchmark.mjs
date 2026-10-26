@@ -10,7 +10,7 @@ import { daemonStatus } from "../dist/core/daemon-state.js";
 import { sessionKey } from "../dist/core/mailbox.js";
 import { hash, repository } from "../dist/core/store.js";
 
-const temporary = await mkdtemp(join(tmpdir(), "worktree-sync-bench-"));
+const temporary = await mkdtemp(join(tmpdir(), "git-relay-bench-"));
 const previousState = process.env.WORKTREE_SYNC_STATE_DIR;
 process.env.WORKTREE_SYNC_STATE_DIR = join(temporary, "state");
 const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, "-c", "user.name=Benchmark", "-c", "user.email=benchmark@example.test", "-c", "commit.gpgsign=false", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();

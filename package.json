@@ -1,32 +1,61 @@
 {
-  "name": "worktree-relay",
+  "name": "git-relay",
   "version": "0.1.0",
-  "description": "Worktree Relay: shared Git worktree change awareness for coding agents",
+  "description": "GitRelay: shared Git worktree change awareness for coding agents",
   "type": "module",
-  "keywords": ["pi-package", "git", "worktree", "coding-agent"],
-  "files": ["index.ts", "src", "dist", "scripts", "skills", "docs", "README.md"],
+  "keywords": [
+    "pi-package",
+    "git",
+    "worktree",
+    "coding-agent"
+  ],
+  "files": [
+    "index.ts",
+    "src",
+    "dist",
+    "scripts",
+    "skills",
+    "docs",
+    "README.md",
+    ".codex-plugin",
+    "assets"
+  ],
   "pi": {
-    "extensions": ["./src/adapters/pi/index.ts"],
-    "skills": ["./skills/worktree-coordination"]
+    "extensions": [
+      "./src/adapters/pi/index.ts"
+    ],
+    "skills": [
+      "./skills/worktree-coordination"
+    ]
   },
   "bin": {
+    "git-relay": "./dist/cli/main.js",
     "worktree-relay": "./dist/cli/main.js",
     "worktree-sync": "./dist/cli/main.js"
   },
   "overrides": {
-    "@earendil-works/pi-coding-agent": { "undici": "8.12.2" }
+    "@earendil-works/pi-coding-agent": {
+      "undici": "8.12.2"
+    }
   },
-  "engines": { "node": ">=22.19.0" },
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@opencode/plugin": "^2.1.2"
   },
   "peerDependenciesMeta": {
-    "@earendil-works/pi-coding-agent": { "optional": true },
-    "@opencode/plugin": { "optional": true }
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@opencode/plugin": {
+      "optional": true
+    }
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "build:codex-plugin": "npm run build && node scripts/build-codex-plugin.mjs",
     "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
     "benchmark": "npm run build && node scripts/benchmark.mjs",

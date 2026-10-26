@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.tgz
 .zvec-grep/
+.codex/git-relay-status.md
+.codex/plugin-build/

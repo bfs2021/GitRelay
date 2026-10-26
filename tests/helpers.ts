@@ -9,7 +9,7 @@ export function git(cwd: string, ...args: string[]): string {
 }
 
 export async function fixture(t: { after(fn: () => void | Promise<void>): void }) {
-  const temp = await mkdtemp(join(tmpdir(), "worktree-sync-"));
+  const temp = await mkdtemp(join(tmpdir(), "git-relay-"));
   t.after(() => rm(temp, { recursive: true, force: true }));
   const root = await realpath(temp);
   const previousState = process.env.WORKTREE_SYNC_STATE_DIR;
