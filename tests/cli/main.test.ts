@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { test } from "node:test";
 import { fixture } from "../helpers.ts";
@@ -27,6 +27,30 @@ test("separate CLI processes share messages across coding agents", async (t) => 
     assert.equal((await run(...args)).stdout, "");
   }
   assert.equal(JSON.parse((await run("sessions", "--cwd", f.main)).stdout).sessions.length, 3);
+});
+
+test("CLI help, explicit cwd and hooks survive a deleted process cwd", { skip: process.platform === "win32" }, async (t) => {
+  const f = await fixture(t);
+  const cases = [
+    { args: ["--help"], expected: /Worktree Relay/ },
+    { args: ["check", "--cwd", f.b, "--session", "deleted-cwd"], expected: /^$/ },
+    { args: ["daemon", "status"], expected: /"running":false/ },
+    { args: ["hook", "claude-code"], expected: /^\{\}\s*$/ },
+  ];
+  for (const [index, { args, expected }] of cases.entries()) {
+    const script = `
+      import { mkdirSync, rmdirSync } from "node:fs";
+      const gone = ${JSON.stringify(join(f.root, "gone-"))} + ${index};
+      mkdirSync(gone);
+      process.chdir(gone);
+      rmdirSync(gone);
+      process.argv = ${JSON.stringify([process.execPath, ...args])};
+      await import(${JSON.stringify(pathToFileURL(cli).href)});
+    `;
+    const result = exec(process.execPath, ["--input-type=module", "--eval", script], { timeout: 5000 });
+    result.child.stdin!.end(JSON.stringify({ hook_event_name: "SessionStart", session_id: "deleted-cwd", cwd: f.b }));
+    assert.match((await result).stdout, expected);
+  }
 });
 
 test("CLI emits portable JSON once, persists its cursor, and rejects invalid invocation", async (t) => {

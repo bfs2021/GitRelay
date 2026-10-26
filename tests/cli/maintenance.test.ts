@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
-import { eventsIn } from "../../src/core/mailbox.ts";
+import { eventsIn, sendMessage } from "../../src/core/mailbox.ts";
 import { readJson, repository, stateDirectory } from "../../src/core/store.ts";
 import { fixture } from "../helpers.ts";
 
@@ -59,6 +59,44 @@ test("daemon output failure exits without leaving its lock or heartbeat", async 
   child.stdout.destroy();
   const force = setTimeout(() => child.kill("SIGKILL"), 3000);
   try { assert.equal(await closed, 1, stderr); }
+  finally { clearTimeout(force); }
+  assert.equal(await readJson(join(stateDirectory(), "daemon.lock")), undefined);
+  assert.equal(await readJson(join(stateDirectory(), "daemon.json")), undefined);
+});
+
+test("daemon SIGTERM exits even when stdout is an unread full pipe", async (t) => {
+  const f = await fixture(t);
+  await sendMessage({ cwd: f.a, ref: "refs/heads/missing", adapter: "cc", session: "bad", text: "invalid ref" });
+  const repo = await repository(f.a);
+  const script = `
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk, callback) => {
+      if (chunk.includes('"type":"daemon.error"')) {
+        chunk += "x".repeat(4 * 1024 * 1024);
+        process.stderr.write("blocking-output\\n");
+      }
+      return write(chunk, callback);
+    };
+    process.argv = [process.execPath, "daemon", "--interval-ms", "50"];
+    await import(${JSON.stringify(pathToFileURL(cli).href)});
+  `;
+  const child = spawn(process.execPath, ["--input-type=module", "--eval", script], { stdio: ["ignore", "pipe", "pipe"] });
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (data: string) => { stderr += data; });
+  const exited = new Promise<number | null>((resolve, reject) => { child.once("exit", resolve); child.once("error", reject); });
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    child.stdout.destroy();
+    await exited;
+  });
+  // Do not read stdout; one enlarged diagnostic fills the real OS pipe.
+  await waitFor(() => stderr.includes("blocking-output"));
+  await delay(50);
+  assert.equal(await readJson(join(repo.directory, "publish.lock")), undefined);
+  child.kill("SIGTERM");
+  const force = setTimeout(() => child.kill("SIGKILL"), 3000);
+  try { assert.equal(await exited, 0, stderr); }
   finally { clearTimeout(force); }
   assert.equal(await readJson(join(stateDirectory(), "daemon.lock")), undefined);
   assert.equal(await readJson(join(stateDirectory(), "daemon.json")), undefined);

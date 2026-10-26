@@ -106,6 +106,35 @@ test("daemon cleans newly confirmed events again at the hourly maintenance inter
   await running;
 });
 
+test("blocked daemon output releases publish.lock and remains abortable", async (t) => {
+  const abort = new AbortController();
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let running: Promise<void> | undefined;
+  t.after(async () => { abort.abort(); release.resolve(); await running; });
+  const f = await fixture(t);
+  const receiver = { cwd: f.b, ref: "refs/heads/main", adapter: "codex", session: "B", async deliver() {} };
+  await consumeMailbox(receiver);
+  await sendMessage({ cwd: f.a, ref: "refs/heads/missing", adapter: "cc", session: "bad", text: "invalid ref" });
+  const repo = await repository(f.b);
+  running = runDaemon({
+    signal: abort.signal, intervalMs: 50,
+    onEvent(event: any) {
+      if (event.type === "daemon.error") { entered.resolve(); return release.promise; }
+    },
+  });
+  running.catch(entered.reject);
+  await entered.promise;
+  assert.equal(await readJson(join(repo.directory, "publish.lock")), undefined);
+  const event = await sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "not blocked" });
+  assert.ok((await consumeMailbox(receiver)).some((notification) => notification.event.id === event.id));
+  abort.abort();
+  await Promise.race([running, delay(2000).then(() => { throw new Error("blocked output prevented daemon shutdown"); })]);
+  assert.equal(await readJson(join(stateDirectory(), "daemon.lock")), undefined);
+  assert.equal(await readJson(join(stateDirectory(), "daemon.json")), undefined);
+  assert.equal(await readJson(join(repo.directory, "publish.lock")), undefined);
+});
+
 test("daemon validates limits and supports cancellation before acquiring its lock", async () => {
   await assert.rejects(runDaemon({ signal: AbortSignal.abort() }), /abort/i);
   await assert.rejects(runDaemon({ signal: new AbortController().signal, intervalMs: 0 }), /interval-ms/);

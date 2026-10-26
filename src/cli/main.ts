@@ -22,7 +22,7 @@ async function main() {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
-      cwd: { type: "string", default: process.cwd() },
+      cwd: { type: "string" },
       ref: { type: "string", default: process.env.WORKTREE_MAIN_REF ?? "refs/heads/main" },
       session: { type: "string" },
       agent: { type: "string", default: "cli" },
@@ -56,28 +56,29 @@ async function main() {
   }
   if (command === "daemon" && agent === "status" && positionals.length === 2) { await output(await daemonStatus()); return; }
   if (!["check", "watch", "send", "sessions", "join", "leave", "gc", "daemon"].includes(command) || positionals.length !== 1) throw new Error("Expected check, watch, send, sessions, join, leave, gc, daemon or hook.");
-  if (command === "sessions") { await output({ sessions: await listSessions(values.cwd) }); return; }
+  const cwd = () => values.cwd ?? process.cwd();
+  if (command === "sessions") { await output({ sessions: await listSessions(cwd()) }); return; }
   if (command === "gc") {
     if (values.apply && values["dry-run"]) throw new Error("Choose --apply or --dry-run, not both.");
-    await output(await collectGarbage(values.cwd, { apply: values.apply === true, retentionDays: days }));
+    await output(await collectGarbage(cwd(), { apply: values.apply === true, retentionDays: days }));
     return;
   }
   if (command !== "daemon" && !values.session) throw new Error("--session ID is required for per-session delivery and deduplication.");
   if (command === "join" || command === "leave") {
-    const options = { cwd: values.cwd, ref: values.ref, adapter: values.agent, session: values.session! };
+    const options = { cwd: cwd(), ref: values.ref, adapter: values.agent, session: values.session! };
     const session = command === "join" ? await joinSession(options) : await leaveSession(options);
     await output({ session, left: command === "leave" && session !== undefined });
     return;
   }
   if (command === "send") {
     if (!values.message) throw new Error("--message TEXT is required.");
-    const event = await sendMessage({ cwd: values.cwd, ref: values.ref, adapter: values.agent, session: values.session!, text: values.message, files: values.file });
+    const event = await sendMessage({ cwd: cwd(), ref: values.ref, adapter: values.agent, session: values.session!, text: values.message, files: values.file });
     await output({ eventId: event.id, recipients: event.recipients.length });
     return;
   }
   const abort = new AbortController();
   const check = () => consumeMailbox({
-    cwd: values.cwd, ref: values.ref, session: values.session!, adapter: values.agent, signal: abort.signal,
+    cwd: cwd(), ref: values.ref, session: values.session!, adapter: values.agent, signal: abort.signal,
     async deliver(notifications) {
       for (const notification of notifications) {
         const data = notification.kind === "upstream" ? notification.change : notification.event;
@@ -91,6 +92,8 @@ async function main() {
   try {
     if (command === "daemon") {
       await runDaemon({ signal: abort.signal, intervalMs: Number(values["interval-ms"]), retentionDays: days, onEvent: output });
+      // Node cannot cancel stdout pipe writes; exit only after daemon locks and heartbeat are released.
+      if (abort.signal.aborted) process.exit(0);
       return;
     }
     if (command === "check") { await check(); return; }

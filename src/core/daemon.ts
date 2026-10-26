@@ -22,12 +22,22 @@ export async function runDaemon(options: DaemonOptions): Promise<void> {
   const root = stateDirectory();
   await mkdir(join(root, "repos"), { recursive: true, mode: 0o700 });
   const token = hash(randomUUID());
+  async function emit(event: object) {
+    const stopped = Promise.withResolvers<void>();
+    const stop = () => stopped.resolve();
+    options.signal.addEventListener("abort", stop, { once: true });
+    try {
+      if (!options.signal.aborted) await Promise.race([options.onEvent?.(event), stopped.promise]);
+    } finally {
+      options.signal.removeEventListener("abort", stop);
+    }
+  }
   await withLock(join(root, "daemon.lock"), async () => {
     const heartbeat = () => writeJson(join(root, "daemon.json"), { pid: process.pid, token, intervalMs, heartbeatAt: new Date().toISOString() });
     let lastCleanup = -Infinity;
     try {
       await heartbeat();
-      await options.onEvent?.({ type: "daemon.ready", pid: process.pid, stateDirectory: root, intervalMs, retentionDays: days });
+      await emit({ type: "daemon.ready", pid: process.pid, stateDirectory: root, intervalMs, retentionDays: days });
       while (!options.signal.aborted) {
         await heartbeat();
         const clean = Date.now() - lastCleanup >= 60 * 60 * 1000;
@@ -42,23 +52,25 @@ export async function runDaemon(options: DaemonOptions): Promise<void> {
             if (hash(common) !== id) throw new Error(`Repository identity mismatch: ${id}`);
             const repo: Repository = { id, common, root: common, directory };
             await mkdir(join(directory, "trash"), { recursive: true, mode: 0o700 });
+            const errors: object[] = [];
             await withLock(join(directory, "publish.lock"), async () => {
               const refs = [...new Set((await sessionsIn(repo)).filter((session) => !session.closedAt).map((session) => session.ref))];
               for (const ref of refs) {
                 options.signal.throwIfAborted();
                 try { await synchronizeRef(repo, ref, { adapter: "daemon", session: String(process.pid) }, options.signal); }
                 catch (error) {
-                  if (!options.signal.aborted) await options.onEvent?.({ type: "daemon.error", repo: id, ref, message: error instanceof Error ? error.message : String(error) });
+                  if (!options.signal.aborted) errors.push({ type: "daemon.error", repo: id, ref, message: error instanceof Error ? error.message : String(error) });
                 }
                 await heartbeat();
               }
             });
+            for (const error of errors) await emit(error);
             if (clean && !options.signal.aborted) {
               const report = await collectRepository(repo, { apply: true, retentionDays: days, signal: options.signal });
-              await options.onEvent?.({ type: "daemon.cleanup", repo: id, removed: report.removed.length, kept: report.kept.length });
+              await emit({ type: "daemon.cleanup", repo: id, removed: report.removed.length, kept: report.kept.length });
             }
           } catch (error) {
-            if (!(error instanceof BusyError) && !options.signal.aborted) await options.onEvent?.({ type: "daemon.error", repo: id, message: error instanceof Error ? error.message : String(error) });
+            if (!(error instanceof BusyError) && !options.signal.aborted) await emit({ type: "daemon.error", repo: id, message: error instanceof Error ? error.message : String(error) });
           }
         }
         if (clean) lastCleanup = Date.now();
