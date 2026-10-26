@@ -121,10 +121,10 @@ test("unborn and unrelated worktree histories give actionable errors and preserv
   await f.commit(f.main, "shared.txt", "upstream\n");
   git(f.b, "restore", "--", "shared.txt");
   git(f.b, "switch", "--orphan", "unrelated");
-  await assert.rejects(consumeMailbox(b), /HEAD.*commit|HEAD.*提交/);
+  await assert.rejects(consumeMailbox(b), /HEAD.*commit|HEAD.*commit/);
   await f.commit(f.b, "shared.txt", "orphan commit\n");
-  await assert.rejects(worktreeFiles(f.b, f.initial), /common ancestor|共同祖先/);
-  await assert.rejects(consumeMailbox(b), /common ancestor|共同祖先/);
+  await assert.rejects(worktreeFiles(f.b, f.initial), /common ancestor|common ancestor/);
+  await assert.rejects(consumeMailbox(b), /common ancestor|common ancestor/);
   const repo = await repository(f.b);
   assert.equal((await eventsIn(repo)).filter((event) => event.kind === "upstream").length, 1);
   assert.deepEqual(await readdir(join(repo.directory, "receipts", sessionKey(repo, b, ref))), []);
@@ -188,7 +188,7 @@ test("pruned Git objects become an acknowledged history-gap notification, not an
   const queued = await consumeMailbox({ ...b, async deliver() { return false; } });
   const gaps = queued.filter((item) => item.kind === "upstream" && item.change.unavailable);
   assert.equal(gaps.length, 2, "both a missing range end and a missing range start are diagnosed");
-  assert.match(formatNotifications(gaps), /历史不可用/);
+  assert.match(formatNotifications(gaps), /history unavailable/);
   for (const item of queued) assert.equal(await readReceipt(repo, key, item.event.id), undefined);
   const accepted = await consumeMailbox(b);
   assert.ok(accepted.some((item) => item.event.id === message.id));

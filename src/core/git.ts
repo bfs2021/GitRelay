@@ -66,14 +66,14 @@ export async function addWorktree(
   newBranch = false,
   startPoint = "HEAD",
 ): Promise<string> {
-  if (!path.trim()) throw new Error("Worktree 路径不能为空。");
+  if (!path.trim()) throw new Error("Worktree path must not be empty.");
   await git(cwd, ["check-ref-format", "--branch", branch]);
   // Do not let check-ref-format's @{-n} expansion change the requested branch.
-  if (branch.startsWith("-") || branch.startsWith("@{")) throw new Error("请使用明确的分支名。");
+  if (branch.startsWith("-") || branch.startsWith("@{")) throw new Error("Use an explicit branch name.");
   const target = resolve(cwd, path);
   if (newBranch) {
     const refs = (await git(cwd, ["for-each-ref", "--format=%(refname)", "--", `refs/heads/${startPoint}`, `refs/tags/${startPoint}`])).trim().split("\n");
-    if (refs.includes(`refs/heads/${startPoint}`) && refs.includes(`refs/tags/${startPoint}`)) throw new Error("起点同时匹配分支和标签；请使用 refs/heads/ 或 refs/tags/ 下的完整引用。");
+    if (refs.includes(`refs/heads/${startPoint}`) && refs.includes(`refs/tags/${startPoint}`)) throw new Error("The starting point matches both a branch and a tag; use a full ref under refs/heads/ or refs/tags/.");
     const commit = (await git(cwd, ["rev-parse", "--verify", "--end-of-options", `${startPoint}^{commit}`])).trim();
     await git(cwd, ["worktree", "add", "-b", branch, "--", target, commit]);
   } else {
@@ -91,13 +91,13 @@ export async function removeWorktree(cwd: string, path: string): Promise<void> {
     throw error;
   });
   const tree = trees.find((entry) => resolve(entry.path) === target);
-  if (!tree) throw new Error("所选路径不是当前仓库的 worktree。");
-  if (tree === trees[0] || tree.bare) throw new Error("不能删除主工作区或裸仓库。");
-  if (tree.locked !== undefined) throw new Error("不能删除已锁定的 worktree。");
+  if (!tree) throw new Error("The selected path is not a worktree of the current repository.");
+  if (tree === trees[0] || tree.bare) throw new Error("Cannot remove the main worktree or a bare repository.");
+  if (tree.locked !== undefined) throw new Error("Cannot remove a locked worktree.");
   const current = await realpath(cwd);
   const inside = relative(target, current);
   if (!inside || (!isAbsolute(inside) && inside !== ".." && !inside.startsWith(`..${sep}`))) {
-    throw new Error("不能删除当前 pi 所在的 worktree，请先在其他工作区启动 pi。");
+    throw new Error("Cannot remove the current pi worktree. Start pi in another worktree first.");
   }
   // Git refuses dirty worktrees (including untracked files); never retry with --force.
   await git(cwd, ["worktree", "remove", "--", target]);

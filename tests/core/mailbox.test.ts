@@ -18,7 +18,7 @@ test("Claude Code publishes one message; Codex and OpenCode receive independent 
   const opencode = { cwd: f.c, ref, adapter: "opencode", session: "same-native-id", async deliver(batch: Notification[]) { c.push(...batch); } };
   await consumeMailbox(codex);
   await consumeMailbox(opencode);
-  const event = await sendMessage({ cwd: f.a, adapter: "claude-code", session: "A", text: "接口已调整，请检查调用方式。" });
+  const event = await sendMessage({ cwd: f.a, adapter: "claude-code", session: "A", text: "The interface has changed; check its callers." });
   assert.equal(event.recipients.length, 2);
   await consumeMailbox(codex);
   assert.equal(b[0].event.id, event.id);

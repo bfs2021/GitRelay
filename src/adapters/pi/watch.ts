@@ -52,7 +52,7 @@ export function createWatcher(pi: ExtensionAPI, ctx: ExtensionContext, ref: stri
     active = check().then(() => { lastError = ""; }).catch((error) => {
       if (abort.signal.aborted) return;
       const message = error instanceof Error ? error.message : String(error);
-      if (message !== lastError) ctx.ui.notify(`Worktree 监控暂不可用，将重试：${message}`, "warning");
+      if (message !== lastError) ctx.ui.notify(`Worktree monitoring is temporarily unavailable; retrying: ${message}`, "warning");
       lastError = message;
     }).finally(() => { active = undefined; });
     return active;

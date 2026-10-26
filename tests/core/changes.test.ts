@@ -19,7 +19,7 @@ test("one merged worktree informs two overlapping worktrees but not the clean so
     assert.deepEqual(change?.files, ["shared.txt"]);
     assert.ok(change?.patch.includes("A upstream"));
     assert.equal(change?.rewritten, false);
-    assert.match(formatChange(change!), /不授权 merge/);
+    assert.match(formatChange(change!), /does not authorize merge/);
   }
   assert.equal(await inspectChange({ root: f.a, ref, commit: f.initial }, current), undefined);
   assert.equal(git(f.b, "show", "HEAD:shared.txt"), "B committed\n");
@@ -62,7 +62,7 @@ test("unrelated updates do not trigger, ref rewind is identified, subdirectories
   assert.equal(rewrite?.rewritten, true);
   await mkdir(join(f.b, "sub"));
   assert.equal(await watchRoot(join(f.b, "sub")), f.b);
-  await assert.rejects(resolveMain(f.main, "--help"), /完整分支引用/);
+  await assert.rejects(resolveMain(f.main, "--help"), /full branch ref/);
 });
 
 test("fast-forward through a second parent compares snapshots without replaying old main edits", async (t) => {
@@ -79,7 +79,7 @@ test("fast-forward through a second parent compares snapshots without replaying 
   assert.deepEqual(change?.files, ["other.txt"]);
   assert.equal(change?.rewritten, false);
   assert.equal(change?.snapshot, true);
-  assert.match(formatChange(change!), /快照/);
+  assert.match(formatChange(change!), /snapshots/);
   assert.ok(!change!.patch.includes("already on main"));
 });
 
@@ -97,7 +97,7 @@ test("failure to run Git is not acknowledged as a missing-history notification",
 
 test("unusual paths use literal pathspecs and huge diff previews are bounded", async (t) => {
   const f = await fixture(t);
-  const name = "[shared]* 中文\n.txt";
+  const name = "[shared]* \u4e2d\u6587\n.txt";
   await f.commit(f.main, name, "initial\n");
   git(f.b, "merge", "--ff-only", "main");
   const before = await resolveMain(f.main, ref);

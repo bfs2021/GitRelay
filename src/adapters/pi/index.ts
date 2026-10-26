@@ -10,8 +10,8 @@ function label(tree: Worktree): string {
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.registerFlag("worktree-watch", { type: "boolean", default: true, description: "自动向 agent 投递相关的上游变更" });
-  pi.registerFlag("worktree-main-ref", { type: "string", default: "refs/heads/main", description: "监控的完整 Git 分支引用" });
+  pi.registerFlag("worktree-watch", { type: "boolean", default: true, description: "Automatically deliver relevant upstream changes to the agent" });
+  pi.registerFlag("worktree-main-ref", { type: "string", default: "refs/heads/main", description: "Full Git branch ref to monitor" });
   let watcher: ReturnType<typeof createWatcher> | undefined;
   // A watcher may be replaced by join while its follow-up still belongs to the host.
   let delivery: { pending?: string[] } = {};
@@ -30,10 +30,10 @@ export default function (pi: ExtensionAPI) {
     watcher = undefined;
   });
   pi.registerCommand("worktree", {
-    description: "管理 Git worktree 与消息订阅：/worktree [list|add|remove|join|leave]",
+    description: "Manage Git worktrees and message subscriptions: /worktree [list|add|remove|join|leave]",
     handler: async (args, ctx) => {
       if (!ctx.hasUI) {
-        ctx.ui.notify("/worktree 需要支持对话框的交互界面。", "error");
+        ctx.ui.notify("/worktree requires an interactive UI with dialog support.", "error");
         return;
       }
       try {
@@ -41,7 +41,7 @@ export default function (pi: ExtensionAPI) {
         if (!action) action = (await ctx.ui.select("Git worktree", ["list", "add", "remove", "join", "leave"])) ?? "";
         if (!action) return;
         if (!["list", "add", "remove", "join", "leave"].includes(action)) {
-          ctx.ui.notify("用法：/worktree [list|add|remove|join|leave]，路径和分支在对话框中填写。", "warning");
+          ctx.ui.notify("Usage: /worktree [list|add|remove|join|leave]; enter paths and branches in the dialogs.", "warning");
           return;
         }
         if (action === "join" || action === "leave") {
@@ -61,11 +61,11 @@ export default function (pi: ExtensionAPI) {
             throw error;
           }
           if (action === "leave") {
-            ctx.ui.notify("已退出消息订阅；未读消息已保留，/worktree join 可重新加入。", "info");
+            ctx.ui.notify("Left the message subscription; unread messages are preserved. Use /worktree join to rejoin.", "info");
           } else {
             watcher = createWatcher(pi, ctx, ref, delivery);
             await watcher.start();
-            ctx.ui.notify("已加入消息订阅。", "info");
+            ctx.ui.notify("Joined the message subscription.", "info");
           }
           return;
         }
@@ -75,35 +75,35 @@ export default function (pi: ExtensionAPI) {
           return;
         }
         if (action === "add") {
-          const mode = await ctx.ui.select("创建 worktree", ["新建分支", "使用已有本地分支"]);
+          const mode = await ctx.ui.select("Create worktree", ["Create a new branch", "Use an existing local branch"]);
           if (!mode) return;
-          const branch = await ctx.ui.input("分支名", "feature/my-task");
+          const branch = await ctx.ui.input("Branch name", "feature/my-task");
           if (!branch?.trim()) return;
-          const path = await ctx.ui.input("Worktree 路径（相对于当前 pi 目录，支持绝对路径）", "../my-worktree");
+          const path = await ctx.ui.input("Worktree path (relative to the current pi directory; absolute paths are supported)", "../my-worktree");
           if (!path?.trim()) return;
           let startPoint = "HEAD";
-          if (mode === "新建分支") {
-            const input = await ctx.ui.input("起点（留空使用 HEAD）", "HEAD");
+          if (mode === "Create a new branch") {
+            const input = await ctx.ui.input("Starting point (leave empty for HEAD)", "HEAD");
             if (input === undefined) return;
             startPoint = input.trim() || "HEAD";
           }
-          const target = await addWorktree(ctx.cwd, path, branch.trim(), mode === "新建分支", startPoint);
-          ctx.ui.notify(`已创建：${JSON.stringify(target)}\n在该目录启动新的 pi 即可使用；当前会话目录不变。`, "info");
+          const target = await addWorktree(ctx.cwd, path, branch.trim(), mode === "Create a new branch", startPoint);
+          ctx.ui.notify(`Created: ${JSON.stringify(target)}\nStart a new pi session in that directory to use it; the current session stays here.`, "info");
           return;
         }
         const candidates = trees.slice(1).filter((tree) => !tree.bare && tree.locked === undefined);
         if (!candidates.length) {
-          ctx.ui.notify("没有可删除的关联 worktree（主工作区和锁定工作区不在候选中）。", "info");
+          ctx.ui.notify("No linked worktrees can be removed (the main worktree and locked worktrees are excluded).", "info");
           return;
         }
         const options = candidates.map(label);
-        const selected = await ctx.ui.select("选择要删除的 worktree", options);
+        const selected = await ctx.ui.select("Select a worktree to remove", options);
         if (selected === undefined) return;
         const tree = candidates[options.indexOf(selected)];
         if (!tree) return;
-        if (!(await ctx.ui.confirm("删除 worktree？", `${JSON.stringify(tree.path)}\n只删除干净的工作区，保留分支；未提交或未跟踪文件会阻止删除，但 Git 忽略的文件（如 .env、build/）会一并删除，请先备份。`))) return;
+        if (!(await ctx.ui.confirm("Remove worktree?", `${JSON.stringify(tree.path)}\nOnly clean worktrees can be removed; branches are kept. Uncommitted or untracked files block removal, but Git-ignored files (such as .env and build/) will be deleted. Back them up first.`))) return;
         await removeWorktree(ctx.cwd, tree.path);
-        ctx.ui.notify(`已删除 worktree：${JSON.stringify(tree.path)}（分支已保留）`, "info");
+        ctx.ui.notify(`Removed worktree: ${JSON.stringify(tree.path)} (branch preserved)`, "info");
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }

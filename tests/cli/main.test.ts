@@ -17,13 +17,13 @@ test("separate CLI processes share messages across coding agents", async (t) => 
   const c = ["check", "--cwd", f.c, "--agent", "opencode", "--session", "C"];
   await run(...b);
   await run(...c);
-  const sent = JSON.parse((await run("send", "--cwd", f.a, "--agent", "claude-code", "--session", "A", "--message", "跨进程共享消息")).stdout);
+  const sent = JSON.parse((await run("send", "--cwd", f.a, "--agent", "claude-code", "--session", "A", "--message", "Cross-process shared message")).stdout);
   assert.equal(sent.recipients, 2);
   for (const args of [b, c]) {
     const received = JSON.parse((await run(...args)).stdout);
     assert.equal(received.type, "worktree.agent-message");
     assert.equal(received.eventId, sent.eventId);
-    assert.equal(received.text, "跨进程共享消息");
+    assert.equal(received.text, "Cross-process shared message");
     assert.equal((await run(...args)).stdout, "");
   }
   assert.equal(JSON.parse((await run("sessions", "--cwd", f.main)).stdout).sessions.length, 2);
@@ -32,7 +32,7 @@ test("separate CLI processes share messages across coding agents", async (t) => 
 test("CLI help, explicit cwd and hooks survive a deleted process cwd", { skip: process.platform === "win32" }, async (t) => {
   const f = await fixture(t);
   const cases = [
-    { args: ["--help"], expected: /Worktree Relay/ },
+    { args: ["--help"], expected: /GitRelay/ },
     { args: ["check", "--cwd", f.b, "--session", "deleted-cwd"], expected: /^$/ },
     { args: ["daemon", "status"], expected: /"running":false/ },
     { args: ["hook", "claude-code"], expected: /^\{\}\s*$/ },
@@ -62,7 +62,7 @@ test("CLI emits portable JSON once, persists its cursor, and rejects invalid inv
   const result = JSON.parse((await run(...args)).stdout);
   assert.equal(result.type, "worktree.upstream-change");
   assert.deepEqual(result.files, ["shared.txt"]);
-  assert.match(result.message, /未自动同步/);
+  assert.match(result.message, /not been automatically synchronized/);
   assert.equal((await run(...args)).stdout, "");
   await assert.rejects(run("check"), /--session ID/);
   await assert.rejects(run("hook", "unknown"), /Choose hook/);

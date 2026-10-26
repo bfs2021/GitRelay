@@ -76,7 +76,7 @@ test("rejects unsupported subcommands without running Git", async () => {
   const { run, notices } = harness();
   await run("remove --force");
   assert.equal(notices[0].type, "warning");
-  assert.match(notices[0].message, /用法/);
+  assert.match(notices[0].message, /Usage/);
 });
 
 test("dialog flow creates, lists, cancels deletion and confirms deletion", async (t) => {
@@ -87,11 +87,11 @@ test("dialog flow creates, lists, cancels deletion and confirms deletion", async
   execFileSync("git", ["-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "initial"], { stdio: "ignore" });
   const ui = harness(true, repo);
   const target = join(root, "new tree");
-  ui.selections.push("新建分支");
+  ui.selections.push("Create a new branch");
   ui.inputs.push("feature/ui", target, "");
   await ui.run("add");
   assert.equal((await listWorktrees(repo)).length, 2);
-  assert.match(ui.notices.at(-1)!.message, /已创建/);
+  assert.match(ui.notices.at(-1)!.message, /Created/);
   await ui.run("list");
   assert.ok(ui.notices.at(-1)!.message.includes(JSON.stringify(await realpath(target))));
   ui.selections.push("FIRST");
@@ -101,8 +101,8 @@ test("dialog flow creates, lists, cancels deletion and confirms deletion", async
   ui.selections.push("FIRST");
   await ui.run("remove");
   assert.equal((await listWorktrees(repo)).length, 1);
-  assert.match(ui.confirmations.at(-1)!, /Git 忽略.*\.env.*build/);
-  assert.match(ui.notices.at(-1)!.message, /已删除/);
+  assert.match(ui.confirmations.at(-1)!, /Git-ignored.*\.env.*build/);
+  assert.match(ui.notices.at(-1)!.message, /Removed/);
 });
 
 test("pi join and leave explicitly control the native session subscription", async (t) => {
@@ -111,12 +111,12 @@ test("pi join and leave explicitly control the native session subscription", asy
   try {
     await ui.run("join");
     assert.equal((await listSessions(f.b))[0].closedAt, undefined);
-    assert.match(ui.notices.at(-1)!.message, /已加入/);
+    assert.match(ui.notices.at(-1)!.message, /Joined/);
   } finally {
     await ui.run("leave");
   }
   assert.ok((await listSessions(f.b))[0].closedAt);
-  assert.match(ui.notices.at(-1)!.message, /未读消息已保留/);
+  assert.match(ui.notices.at(-1)!.message, /unread messages are preserved/);
 });
 
 test("pi join and leave preserve queued relay IDs until the host persists them", async (t) => {
@@ -172,5 +172,5 @@ test("refuses dialog actions without a UI", async () => {
   const { run, notices } = harness(false);
   await run("add");
   assert.equal(notices[0].type, "error");
-  assert.match(notices[0].message, /交互界面/);
+  assert.match(notices[0].message, /interactive UI/);
 });

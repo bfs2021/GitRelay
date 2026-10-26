@@ -30,6 +30,26 @@ test("multiple shared messages produce one valid hook response", async (t) => {
   assert.equal(responses.length, 1);
   assert.match(JSON.stringify(responses[0]), /first shared note/);
   assert.match(JSON.stringify(responses[0]), /second shared note/);
+  assert.match(JSON.stringify(responses[0]), /systemMessage/);
+});
+
+test("Codex shows optional branch status in UI and context without blocking Stop or subagents", async (t) => {
+  const f = await fixture(t);
+  const responses: object[] = [];
+  const output = async (value: object) => { responses.push(value); };
+  const input = { hook_event_name: "SessionStart", cwd: f.b, session_id: "codex-visible" };
+  await runHook("codex", input, "refs/heads/main", output, undefined, true);
+  const response = responses.pop() as { systemMessage: string; decision?: string; hookSpecificOutput: { additionalContext: string } };
+  assert.match(response.systemMessage, /feature\/b/);
+  assert.match(response.systemMessage, /Auto-sync.*Off/);
+  assert.match(response.hookSpecificOutput.additionalContext, /not authorization to act/);
+  assert.equal(response.decision, undefined);
+  await runHook("codex", { ...input, hook_event_name: "Stop" }, "refs/heads/main", output, undefined, true);
+  assert.deepEqual(responses.pop(), {});
+  await runHook("codex", { ...input, agent_id: "subagent" }, "refs/heads/main", output, undefined, true);
+  assert.deepEqual(responses.pop(), {});
+  await runHook("claude-code", input, "refs/heads/main", output, undefined, true);
+  assert.deepEqual(responses.pop(), {});
 });
 
 test("subagent tool hooks neither subscribe nor consume the parent's inbox or pin GC", async (t) => {
@@ -98,8 +118,8 @@ for (const agent of ["claude-code", "codex", "cursor"] as HookAgent[]) {
     assert.deepEqual(responses.pop(), {});
     await runHook(agent, { ...input, hook_event_name: agent === "cursor" ? "postToolUse" : "PostToolUse" }, "refs/heads/main", output);
     assert.ok(JSON.stringify(responses.pop()).includes("another"));
-    await sendMessage({ cwd: f.a, adapter: "opencode", session: "OC-A", text: "来自 OpenCode 的共享消息" });
+    await sendMessage({ cwd: f.a, adapter: "opencode", session: "OC-A", text: "Shared message from OpenCode" });
     await runHook(agent, { ...input, hook_event_name: agent === "cursor" ? "postToolUse" : "PostToolUse" }, "refs/heads/main", output);
-    assert.ok(JSON.stringify(responses.pop()).includes("来自 OpenCode"));
+    assert.ok(JSON.stringify(responses.pop()).includes("from OpenCode"));
   });
 }

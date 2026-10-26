@@ -31,7 +31,7 @@ test("NUL parser preserves unusual paths and worktree metadata", () => {
 
 test("create new/existing branches, list and remove while preserving branches", async (t) => {
   const { repo, root } = await fixture(t);
-  const path = await addWorktree(repo, join(root, "space and 中文\nworktree"), "feature/new", true);
+  const path = await addWorktree(repo, join(root, "space and \u4e2d\u6587\nworktree"), "feature/new", true);
   assert.equal((await listWorktrees(repo))[1].path, path);
   assert.equal((await listWorktrees(repo))[1].branch, "feature/new");
   await removeWorktree(repo, path);
@@ -44,17 +44,17 @@ test("create new/existing branches, list and remove while preserving branches", 
 test("protect primary, current/subdirectory/symlink, locked and dirty worktrees", async (t) => {
   const { repo, root } = await fixture(t);
   const path = await addWorktree(repo, join(root, "linked"), "feature/safe", true);
-  await assert.rejects(removeWorktree(repo, repo), /主工作区/);
-  await assert.rejects(removeWorktree(path, path), /当前 pi/);
+  await assert.rejects(removeWorktree(repo, repo), /main worktree/);
+  await assert.rejects(removeWorktree(path, path), /current pi/);
   const sub = join(path, "sub");
   await mkdir(sub);
-  await assert.rejects(removeWorktree(sub, path), /当前 pi/);
+  await assert.rejects(removeWorktree(sub, path), /current pi/);
   const alias = join(root, "alias");
   await symlink(sub, alias, "dir");
-  await assert.rejects(removeWorktree(alias, path), /当前 pi/);
+  await assert.rejects(removeWorktree(alias, path), /current pi/);
   await rm(sub, { recursive: true });
   git(repo, "worktree", "lock", path);
-  await assert.rejects(removeWorktree(repo, path), /锁定/);
+  await assert.rejects(removeWorktree(repo, path), /locked/);
   git(repo, "worktree", "unlock", path);
   await writeFile(join(path, "untracked.txt"), "keep me");
   await assert.rejects(removeWorktree(repo, path));
@@ -62,13 +62,13 @@ test("protect primary, current/subdirectory/symlink, locked and dirty worktrees"
   git(path, "add", "untracked.txt");
   await assert.rejects(removeWorktree(repo, path));
   assert.equal(await readFile(join(path, "untracked.txt"), "utf8"), "keep me");
-  await assert.rejects(removeWorktree(repo, root), /不是当前仓库/);
+  await assert.rejects(removeWorktree(repo, root), /not a worktree of the current repository/);
 });
 
 test("reject invalid inputs and refuse branch resets or tag-only checkouts", async (t) => {
   const { repo, root } = await fixture(t);
   const path = join(root, "target");
-  await assert.rejects(addWorktree(repo, " ", "feature/new", true), /不能为空/);
+  await assert.rejects(addWorktree(repo, " ", "feature/new", true), /must not be empty/);
   await assert.rejects(addWorktree(repo, path, "--force", true));
   await assert.rejects(addWorktree(repo, path, "bad name", true));
   await assert.rejects(addWorktree(repo, path, "main", true));
@@ -86,7 +86,7 @@ test("ambiguous tag/branch start points require a qualified ref", async (t) => {
   git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "new");
   const newer = git(repo, "rev-parse", "HEAD").trim();
   git(repo, "branch", "dup");
-  await assert.rejects(addWorktree(repo, join(root, "ambiguous"), "feature/ambiguous", true, "dup"), /同时匹配.*完整引用/);
+  await assert.rejects(addWorktree(repo, join(root, "ambiguous"), "feature/ambiguous", true, "dup"), /matches both.*full ref/);
   const fromBranch = await addWorktree(repo, join(root, "branch"), "feature/branch", true, "refs/heads/dup");
   const fromTag = await addWorktree(repo, join(root, "tag"), "feature/tag", true, "refs/tags/dup");
   assert.equal(git(fromBranch, "rev-parse", "HEAD").trim(), newer);

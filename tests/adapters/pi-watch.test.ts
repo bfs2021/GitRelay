@@ -42,10 +42,10 @@ test("pi injects a follow-up, does not checkpoint an unpersisted queue, resumes 
   watcher = createWatcher(pi, ctx, "refs/heads/main");
   await watcher.tick();
   assert.equal(messages.length, 2);
-  const sent = await sendMessage({ cwd: f.a, adapter: "claude-code", session: "CC-A", text: "来自 Claude Code 的协调消息" });
+  const sent = await sendMessage({ cwd: f.a, adapter: "claude-code", session: "CC-A", text: "Coordination message from Claude Code" });
   await watcher.tick();
   assert.equal(messages.length, 3);
-  assert.ok(messages[2].message.content.includes("来自 Claude Code"));
+  assert.ok(messages[2].message.content.includes("from Claude Code"));
   assert.deepEqual(messages[2].message.details.eventIds, [sent.id]);
   entries.push({ type: "custom_message", ...messages[2].message });
   busy = false;
