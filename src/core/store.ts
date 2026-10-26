@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -70,22 +70,28 @@ export async function withLock<T>(path: string, run: () => Promise<T>, options: 
     try { lock = await open(path, "wx", 0o600); break; }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const owner = await readJson(path).catch(() => undefined) as { pid?: number } | undefined;
-      const info = await stat(path).catch((failure) => {
+      const info = await lstat(path).catch((failure) => {
         if (failure.code === "ENOENT") return undefined;
         throw failure;
       });
-      if (!info) continue;
+      if (info && !info.isFile()) throw new Error(`Invalid worktree-sync lock (not a regular file): ${path}`);
+      const owner = info ? await readJson(path).catch(() => undefined) as { pid?: number } | undefined : undefined;
       if (owner && Number.isInteger(owner.pid) && owner.pid! > 0) {
         try { process.kill(owner.pid!, 0); }
         catch (failure) {
-          if ((failure as NodeJS.ErrnoException).code === "ESRCH") throw new Error(`Stale worktree-sync lock: ${path}. Verify the owner has exited, then remove this lock file.`);
+          const latest = await lstat(path).catch((error) => {
+            if (error.code === "ENOENT") return undefined;
+            throw error;
+          });
+          if ((failure as NodeJS.ErrnoException).code === "ESRCH" && latest && info &&
+              latest.dev === info.dev && latest.ino === info.ino && latest.mtimeMs === info.mtimeMs) {
+            throw new Error(`Stale worktree-sync lock: ${path}. Recheck the current owner before manual recovery; never remove a live lock.`);
+          }
         }
       }
-      // shortcut: PID files cannot authenticate reused PIDs; use OS locks if automatic recovery is required.
-      const old = Date.now() - info.mtimeMs > 60_000;
-      if (old || (options.waitMs && performance.now() >= deadline)) {
-        throw new Error(`Worktree-sync lock remains busy: ${path} (PID ${owner?.pid ?? "unknown"}). The owner may be stalled or its PID reused; verify no relay operation owns this lock before removing it.`);
+      // Age alone says nothing about a long-running daemon's health.
+      if (options.waitMs && performance.now() >= deadline) {
+        throw new Error(`Worktree-sync lock remains busy: ${path} (PID ${owner?.pid ?? "unknown"}). Retry later; do not remove a live lock.`);
       }
       if (!options.waitMs) throw new BusyError(`Worktree-sync is busy: ${path}`);
       await delay(Math.min(10 + Math.random() * 30, Math.max(1, deadline - performance.now())), undefined, { signal: options.signal });
@@ -97,7 +103,13 @@ export async function withLock<T>(path: string, run: () => Promise<T>, options: 
     options.signal?.throwIfAborted();
     return await run();
   } finally {
-    try { await lock.close(); }
-    finally { await rm(path, { force: true }); }
+    try {
+      const held = await lock.stat();
+      const current = await lstat(path).catch((error) => {
+        if (error.code === "ENOENT") return undefined;
+        throw error;
+      });
+      if (current?.dev === held.dev && current.ino === held.ino) await rm(path, { force: true });
+    } finally { await lock.close(); }
   }
 }

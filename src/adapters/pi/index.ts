@@ -45,15 +45,24 @@ export default function (pi: ExtensionAPI) {
           return;
         }
         if (action === "join" || action === "leave") {
+          const wasWatching = watcher !== undefined;
           await watcher?.stop();
           watcher = undefined;
           const ref = String(pi.getFlag("worktree-main-ref") ?? "refs/heads/main");
           const options = { cwd: ctx.cwd, ref, adapter: "pi", session: ctx.sessionManager.getSessionId() };
+          try {
+            if (action === "leave") await leaveSession(options);
+            else await joinSession(options);
+          } catch (error) {
+            if (wasWatching) {
+              watcher = createWatcher(pi, ctx, ref, delivery);
+              await watcher.start();
+            }
+            throw error;
+          }
           if (action === "leave") {
-            await leaveSession(options);
             ctx.ui.notify("已退出消息订阅；未读消息已保留，/worktree join 可重新加入。", "info");
           } else {
-            await joinSession(options);
             watcher = createWatcher(pi, ctx, ref, delivery);
             await watcher.start();
             ctx.ui.notify("已加入消息订阅。", "info");

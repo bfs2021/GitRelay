@@ -111,6 +111,27 @@ for (const command of ["check", "watch"]) {
   });
 }
 
+test("watch exits on a closed stdout pipe without acknowledging the event", async (t) => {
+  const f = await fixture(t);
+  const args = ["--cwd", f.b, "--session", "B"];
+  await run("check", ...args);
+  const event = await sendMessage({ cwd: f.a, adapter: "cli", session: "sender", text: "unread" });
+  const repo = await repository(f.b);
+  const key = sessionKey(repo, { adapter: "cli", session: "B" }, "refs/heads/main");
+  const child = spawn(process.execPath, [cli, "watch", ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  const exited = new Promise<number | null>((resolve, reject) => { child.once("exit", resolve); child.once("error", reject); });
+  child.stdout.destroy();
+  let stderr = "";
+  child.stderr.on("data", (data) => { stderr += data; });
+  const force = setTimeout(() => child.kill("SIGKILL"), 3000);
+  try {
+    assert.equal(await exited, 1, stderr);
+    assert.match(stderr, /EPIPE|closed|destroyed/i);
+    assert.equal(await readReceipt(repo, key, event.id), undefined);
+    assert.equal(await readJson(join(repo.directory, "sessions", `${key}.lock`)), undefined);
+  } finally { clearTimeout(force); }
+});
+
 test("interrupting an actual 5000-event GC scan does not strand publish.lock", async (t) => {
   const f = await fixture(t);
   const repo = await repository(f.b);

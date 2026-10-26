@@ -78,7 +78,7 @@ hook 输入按字节累计，最多保留 16 MiB JSON，以容纳含较大文件
 将 [`src/adapters/cursor/hooks.json`](../src/adapters/cursor/hooks.json) 合并到 `.cursor/hooks.json` 或个人配置，保留 `version: 1`。
 
 - `postToolUse` 返回 `additional_context`。
-- `stop` 仅在 `status: completed` 且 `loop_count < 1` 时返回 `followup_message`。
+- `stop` 在 `status: completed` 且有未读相关事件时返回 `followup_message`；不把会话累计的 `loop_count` 当成永久禁用开关。已确认事件不会重复跟进，没有新事件时返回 `{}`。
 - 第一次支持的 hook 建立基线；之后每次工具完成或停止时检查。不会唤醒已经停下来的会话。
 - 多根 workspace 必须由 hook 输入提供明确 `cwd`；没有 `cwd` 且有多个 root 时拒绝猜测目标仓库。
 
@@ -137,9 +137,9 @@ stdout 仅用于数据，诊断写入 stderr。**输出成功不等于 agent 已
 ## 状态、恢复和限制
 
 - 所有平台的状态统一写入用户级 `worktree-agent-sync/repos/<repo-id>/`，支持 `XDG_STATE_HOME` / `WORKTREE_SYNC_STATE_DIR`。同仓库事件共享、每个会话独立回执，不同 clone 不互通。旧 Git 目录游标只读迁移，不删除原文件。
-- 同会话并发检查用排他锁避免重复发送；新鲜锁的竞争跳过本轮，持锁超过 60 秒会明确提示。仓库发布锁竞争会带抖动等待，最多 5 秒，超时不静默跳过。所有 CLI 锁操作均响应 SIGINT/SIGTERM，清理后退出；输出管道堵塞时也不写成功回执，不留下消费锁。SIGKILL/断电仍可能留下 `.lock`，PID 复用也不能靠 pid-file 自动识别；核实没有 relay 操作仍拥有该锁后再移除，不自动抢锁或删除状态。
+- 同会话并发检查用排他锁避免重复发送；活跃锁的竞争跳过本轮，不根据锁文件年龄判断持有者是否停滞。仓库发布锁竞争会带抖动等待，最多 5 秒，超时不静默跳过。所有 CLI 锁操作均响应 SIGINT/SIGTERM，清理后退出；输出管道堵塞时也不写成功回执，不留下消费锁；`watch` 遇到 EPIPE 等输出故障会退出而不是无限重试。SIGKILL/断电仍可能留下 `.lock`，PID 复用也不能靠 pid-file 自动识别；核实没有 relay 操作仍拥有该锁后再移除，不自动抢锁或删除状态。
 - 主分支有共同祖先的 reset/force-push 会标为历史改写，发送前后快照差异。若事件的提交对象已无法读取（包括仓库同路径重建），投递 `unavailable: true` 的明确历史缺口通知；只有宿主接受后才确认，不把未知影响视为无关，后续消息可继续。对象完整但没有共同祖先、worktree HEAD 无法比较或 Git 程序无法执行时仍报错并保留事件。
-- 检测依据为当前工作区状态，不是 agent 未来打算修改的文件。跨文件语义依赖和跨主机 worktree 不在范围内。
+- 检测包含被 Git 忽略的本地文件、文件/目录前缀重叠，并遵循 Git `core.ignorecase` 设置；只读取本地文件名，不发送被忽略文件的内容。忽略目录很大时枚举可能变慢，超出 Git 输出上限时保留未读事件并报错。检测依据为当前工作区状态，不是 agent 未来打算修改的文件。跨文件语义依赖和跨主机 worktree 不在范围内。
 - 首次登记之前的变化不补发；无交集时记录 `irrelevant` 回执，后来才开始修改该文件不会补发已经跳过的历史。新会话也不会收到加入之前的主动广播。
 - 同一轮正常 first-parent 前进会逐个检查提交，避免漏掉先修改再还原的文件。旧位置仅通过其他父节点可达时，使用前后快照并标记 `snapshot: true`，不重放旧 main 变化；这个特殊路径不检测中间改后还原。大量离线历史可能使检查变慢。每次 Git 命令有 30 秒超时，错误不会写入成功回执。
 - diff 预览限制约 24K 字符，文件列表和提交元数据也可能较大；事件中给出精确哈希以便继续查看。二进制文件仅显示 Git 的二进制变更摘要。

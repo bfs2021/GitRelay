@@ -17,6 +17,7 @@ process.once("SIGTERM", stop);
 // A broken or stalled pipe must not bypass lock cleanup or acknowledge undelivered data.
 process.stdout.on("error", () => {});
 
+let outputFailed = false;
 async function output(value: object): Promise<void> {
   const written = Promise.withResolvers<void>();
   const cancel = () => written.reject(abort.signal.reason);
@@ -25,6 +26,9 @@ async function output(value: object): Promise<void> {
     abort.signal.throwIfAborted();
     process.stdout.write(`${JSON.stringify(value)}\n`, (error) => error ? written.reject(error) : written.resolve());
     await written.promise;
+  } catch (error) {
+    outputFailed = true;
+    throw error;
   } finally {
     abort.signal.removeEventListener("abort", cancel);
   }
@@ -112,7 +116,7 @@ async function main() {
   if (command === "check") { await check(); return; }
   while (!abort.signal.aborted) {
     try { await check(); } catch (error) {
-      if (abort.signal.aborted) throw error;
+      if (abort.signal.aborted || outputFailed) throw error;
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     }
     if (abort.signal.aborted) break;

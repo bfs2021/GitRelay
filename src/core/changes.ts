@@ -76,11 +76,35 @@ export async function worktreeFiles(root: string, current: string, signal?: Abor
     ["diff", "--name-only", "--no-renames", "-z", base, head, "--"],
     ["diff", "--name-only", "--no-renames", "-z", "--cached", "--"],
     ["diff", "--name-only", "--no-renames", "-z", "--"],
-    ["ls-files", "--others", "--exclude-standard", "-z"],
+    ["ls-files", "--others", "-z"],
   ]) {
     for (const file of names(await git(root, args, signal))) own.add(file);
   }
   return own;
+}
+
+/** Git's filesystem setting also applies to paths supplied by other worktrees. */
+export async function pathMatcher(root: string, files: Set<string>, signal?: AbortSignal): Promise<(file: string) => boolean> {
+  const ignoreCase = await git(root, ["config", "--bool", "--get", "core.ignorecase"], signal).then((value) => value.trim() === "true").catch((error) => {
+    signal?.throwIfAborted();
+    if (error?.cause?.code === 1) return false;
+    throw error;
+  });
+  const normalize = (file: string) => ignoreCase ? file.toLowerCase() : file;
+  const own = new Set([...files].map(normalize));
+  const parents = new Set<string>();
+  for (const file of own) {
+    for (let end = file.indexOf("/"); end !== -1; end = file.indexOf("/", end + 1)) parents.add(file.slice(0, end));
+  }
+  return (file) => {
+    if (file === "." || file.endsWith("/")) return false;
+    file = normalize(file);
+    if (own.has(file) || parents.has(file)) return true;
+    for (let end = file.indexOf("/"); end !== -1; end = file.indexOf("/", end + 1)) {
+      if (own.has(file.slice(0, end))) return true;
+    }
+    return false;
+  };
 }
 
 export async function inspectChange(cursor: Cursor, current: string, signal?: AbortSignal): Promise<Change | undefined> {
@@ -104,6 +128,7 @@ export async function inspectChange(cursor: Cursor, current: string, signal?: Ab
   }
   const own = await worktreeFiles(root, current, signal);
   if (!own.size) return undefined;
+  const overlaps = await pathMatcher(root, own, signal);
   const rewritten = common !== cursor.commit;
   let steps = rewritten ? [] : (await git(root, ["rev-list", "--first-parent", "--parents", "--reverse", `${cursor.commit}..${current}`], signal)).trim().split("\n").filter(Boolean).map((line) => line.split(" "));
   // An ancestor reached through a second parent is not the start of this first-parent chain.
@@ -114,7 +139,7 @@ export async function inspectChange(cursor: Cursor, current: string, signal?: Ab
   const overlap = new Set<string>();
   for (const [commit, before] of steps) {
     const changed = names(await git(root, ["diff", "--name-only", "--no-renames", "-z", before, commit, "--"], signal));
-    const files = changed.filter((file) => own.has(file));
+    const files = changed.filter(overlaps);
     if (files.length) {
       ranges.push({ before, after: commit, files });
       for (const file of files) overlap.add(file);
@@ -155,7 +180,7 @@ export function formatChange(change: Change): string {
     change.rewritten ? "注意：主分支历史发生改写；以下是前后快照差异，不表示一次普通合并。"
       : change.snapshot ? "旧位置不在当前 first-parent 链上；以下仅比较前后快照，不重放侧分支历史。"
       : "已按 first-parent 检查各次更新（包括 merge、squash 和直接提交）。",
-    "上游变更与你分支上尚未集成的提交、暂存区、未提交或未跟踪文件有同路径交集。",
+    "上游变更与你分支上尚未集成的提交、暂存区、未提交、未跟踪或被忽略的本地文件有路径交集（包括文件/目录前缀重叠）。",
     "这只是文件级相关性，不代表必然冲突；本地代码尚未自动同步。",
     "请重新读取相关文件和 Git 状态，判断本次变更对当前任务的影响。按无影响、需适配、需同步或被冲突阻塞给出结论，并在安全且已获授权时调整实现和测试。",
     "保留本地修改；本消息不授权 merge/rebase、reset、stash、提交或推送，也不要仅因本事件重新发起合并。",

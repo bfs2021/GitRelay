@@ -35,6 +35,7 @@ export async function runDaemon(options: DaemonOptions): Promise<void> {
   await withLock(join(root, "daemon.lock"), async () => {
     const heartbeat = () => writeJson(join(root, "daemon.json"), { pid: process.pid, token, intervalMs, heartbeatAt: new Date().toISOString() });
     let lastCleanup = -Infinity;
+    const missing = new Set<string>();
     try {
       await heartbeat();
       await emit({ type: "daemon.ready", pid: process.pid, stateDirectory: root, intervalMs, retentionDays: days });
@@ -48,7 +49,23 @@ export async function runDaemon(options: DaemonOptions): Promise<void> {
             const metadata = await readJson(join(directory, "repo.json")) as { id: string; common: string } | undefined;
             if (!metadata) continue; // A newly created store may not yet be registered.
             if (metadata.id !== id || typeof metadata.common !== "string") throw new Error(`Invalid repository metadata: ${id}`);
-            const common = await realpath(metadata.common);
+            let common: string;
+            try {
+              common = await realpath(metadata.common);
+              missing.delete(id);
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+              if (hash(metadata.common) !== id) throw new Error(`Repository identity mismatch: ${id}`);
+              if (!missing.has(id)) {
+                missing.add(id);
+                await emit({ type: "daemon.repository-missing", repo: id, message: "Repository unavailable; retaining unread state. Monitoring resumes if it returns." });
+              }
+              if (clean && !options.signal.aborted) {
+                const report = await collectRepository({ id, common: metadata.common, root: metadata.common, directory }, { apply: true, retentionDays: days, signal: options.signal });
+                await emit({ type: "daemon.cleanup", repo: id, removed: report.removed.length, kept: report.kept.length });
+              }
+              continue;
+            }
             if (hash(common) !== id) throw new Error(`Repository identity mismatch: ${id}`);
             const repo: Repository = { id, common, root: common, directory };
             await mkdir(join(directory, "trash"), { recursive: true, mode: 0o700 });
@@ -80,5 +97,5 @@ export async function runDaemon(options: DaemonOptions): Promise<void> {
       const state = await readJson(join(root, "daemon.json")) as { token?: string } | undefined;
       if (state?.token === token) await rm(join(root, "daemon.json"), { force: true });
     }
-  }, { token });
+  }, { token, signal: options.signal });
 }

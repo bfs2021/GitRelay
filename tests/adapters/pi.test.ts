@@ -9,7 +9,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import extension from "../../src/adapters/pi/index.ts";
 import { fixture } from "../helpers.ts";
 import { listSessions, readReceipt, sendMessage, sessionKey } from "../../src/core/mailbox.ts";
-import { repository } from "../../src/core/store.ts";
+import { repository, withLock } from "../../src/core/store.ts";
 
 function harness(hasUI = true, cwd = process.cwd()) {
   const selections: (string | undefined)[] = [];
@@ -142,6 +142,27 @@ test("pi join and leave preserve queued relay IDs until the host persists them",
     assert.equal((await readReceipt(repo, key, event.id))?.status, "delivered");
     assert.equal(ui.messages.length, 1);
     assert.ok(!ui.notices.some((notice) => notice.type === "error"));
+  } finally {
+    await ui.run("leave");
+  }
+});
+
+test("failed leave or join restores the active watcher", async (t) => {
+  const f = await fixture(t);
+  const ui = harness(true, f.b);
+  const repo = await repository(f.b);
+  const key = sessionKey(repo, { adapter: "pi", session: "pi-test" }, "refs/heads/main");
+  try {
+    await ui.run("join");
+    for (const action of ["leave", "join"]) {
+      await withLock(join(repo.directory, "sessions", `${key}.lock`), () => ui.run(action));
+      assert.match(ui.notices.at(-1)!.message, /busy/);
+    }
+    await sendMessage({ cwd: f.a, adapter: "cli", session: "sender", text: "watcher recovered" });
+    const deadline = Date.now() + 8000;
+    while (!ui.messages.length && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(ui.messages.length, 1);
+    assert.match(ui.messages[0].content, /watcher recovered/);
   } finally {
     await ui.run("leave");
   }

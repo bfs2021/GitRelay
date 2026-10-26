@@ -50,6 +50,21 @@ test("subagent tool hooks neither subscribe nor consume the parent's inbox or pi
   assert.deepEqual((await collectGarbage(f.b, { apply: true, retentionDays: 0 })).removed, [event.id]);
 });
 
+test("Cursor cumulative loop_count does not suppress new unread events", async (t) => {
+  const f = await fixture(t);
+  const input = { hook_event_name: "stop", status: "completed", conversation_id: "chat", cwd: f.b };
+  const responses: object[] = [];
+  const output = async (value: object) => { responses.push(value); };
+  await runHook("cursor", input, "refs/heads/main", output);
+  for (const loop_count of [1, 2]) {
+    await sendMessage({ cwd: f.a, adapter: "cli", session: "sender", text: `new note ${loop_count}` });
+    await runHook("cursor", { ...input, loop_count }, "refs/heads/main", output);
+    assert.match(JSON.stringify(responses.pop()), /followup_message/);
+    await runHook("cursor", { ...input, loop_count }, "refs/heads/main", output);
+    assert.deepEqual(responses.pop(), {});
+  }
+});
+
 test("global hooks in a non-Git directory quietly return an empty protocol response", async (t) => {
   const f = await fixture(t);
   for (const agent of ["claude-code", "codex", "cursor"] as const) {

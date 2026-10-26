@@ -19,7 +19,7 @@ export async function runHook(agent: HookAgent, input: HookInput, ref: string, o
   const event = input.hook_event_name;
   const events = agent === "cursor" ? ["postToolUse", "stop"] : ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"];
   if (typeof event !== "string" || !events.includes(event)) { await output({}); return; }
-  if (input.stop_hook_active === true || (agent === "cursor" && event === "stop" && (input.status !== "completed" || Number(input.loop_count ?? 0) >= 1))) {
+  if (input.stop_hook_active === true || (agent === "cursor" && event === "stop" && input.status !== "completed")) {
     await output({});
     return;
   }

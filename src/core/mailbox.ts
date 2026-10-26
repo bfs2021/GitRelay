@@ -170,7 +170,7 @@ export async function sendMessage(options: Identity & { cwd: string; ref?: strin
   for (const file of files) {
     options.signal?.throwIfAborted();
     const info = await stat(join(repo.root, file)).catch((error) => {
-      if (error.code === "ENOENT") return undefined; // Deleted/renamed files can still be coordination targets.
+      if (error.code === "ENOENT" || error.code === "ENOTDIR") return undefined; // Targets may exist only in another worktree.
       throw error;
     });
     if (info?.isDirectory()) throw new Error(`Message files must name files, not directories: ${file}`);

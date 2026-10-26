@@ -34,13 +34,13 @@ test("lock waits are cancellable and time out visibly without stealing the owner
   await withLock(path, async () => {
     const before = await readFile(path, "utf8");
     await assert.rejects(withLock(path, async () => assert.fail("must not acquire"), { waitMs: 1000, signal: AbortSignal.timeout(30) }), /abort/i);
-    await assert.rejects(withLock(path, async () => assert.fail("must not acquire"), { waitMs: 30 }), (error: unknown) => error instanceof Error && !(error instanceof BusyError) && /PID reused|PID.*reused/.test(error.message));
+    await assert.rejects(withLock(path, async () => assert.fail("must not acquire"), { waitMs: 30 }), (error: unknown) => error instanceof Error && !(error instanceof BusyError) && /Retry later; do not remove a live lock/.test(error.message));
     assert.equal(await readFile(path, "utf8"), before);
   });
   assert.equal(await stat(path).catch(() => undefined), undefined);
 });
 
-test("long-held session locks with live or reused PIDs no longer silently skip delivery", async (t) => {
+test("lock age never implies a live owner is stale", async (t) => {
   const f = await fixture(t);
   const receiver = { cwd: f.b, ref, adapter: "test", session: "B", async deliver() {} };
   await consumeMailbox(receiver);
@@ -49,7 +49,8 @@ test("long-held session locks with live or reused PIDs no longer silently skip d
   await withLock(path, async () => {
     const old = new Date(Date.now() - 61_000);
     await utimes(path, old, old);
-    await assert.rejects(consumeMailbox(receiver), /lock remains busy.*PID/);
+    assert.deepEqual(await consumeMailbox(receiver), []);
+    await assert.rejects(withLock(path, async () => {}), BusyError);
     assert.ok(await stat(path));
   });
 });

@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { inspectChange, readCursor, worktreeFiles, type Change, type Cursor } from "./changes.ts";
+import { inspectChange, pathMatcher, readCursor, resolveMain, worktreeFiles, type Change, type Cursor } from "./changes.ts";
 import { eventsIn, publishUpstream, readSession, registerSession, sessionKey, validateIdentity, type Identity, type Notification } from "./mailbox.ts";
 import { BusyError, readJson, repository, withLock, writeJson } from "./store.ts";
 import { daemonStatus } from "./daemon-state.ts";
@@ -52,7 +52,7 @@ export async function consumeMailbox(options: MailboxOptions): Promise<Notificat
       const receipts = join(repo.directory, "receipts", key);
       await mkdir(receipts, { recursive: true, mode: 0o700 });
       const notifications: Notification[] = [];
-      let localFiles: Set<string> | undefined;
+      let overlaps: ((file: string) => boolean) | undefined;
       let size = 0;
       for (const event of await eventsIn(repo, key, options.signal)) {
         options.signal?.throwIfAborted();
@@ -67,8 +67,12 @@ export async function consumeMailbox(options: MailboxOptions): Promise<Notificat
           const change = await inspectChange({ root: repo.root, ref: event.ref, commit: event.previous }, event.commit, options.signal);
           if (change) notification = { kind: "upstream", event, change: { ...change, eventId: event.id } };
         } else if (event.kind === "message") {
-          if (event.files.length) localFiles ??= await worktreeFiles(repo.root, current, options.signal);
-          if (!event.files.length || event.files.some((file) => localFiles!.has(file))) notification = { kind: "message", event };
+          if (event.files.length && !overlaps) {
+            // A daemon cache is a publication hint, not the current integration baseline.
+            const latest = await resolveMain(repo.root, options.ref, options.signal);
+            overlaps = await pathMatcher(repo.root, await worktreeFiles(repo.root, latest, options.signal), options.signal);
+          }
+          if (!event.files.length || event.files.some(overlaps!)) notification = { kind: "message", event };
         }
         if (!notification) {
           await writeJson(receipt, { eventId: event.id, status: "irrelevant", at: new Date().toISOString() });
