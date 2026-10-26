@@ -1,0 +1,147 @@
+{
+  "environment": {
+    "platform": "macOS arm64",
+    "node": "22.23.2",
+    "git": "2.54.0 (Apple Git-157)",
+    "testedAtUtc": "2026-10-25",
+    "source": "working tree, not a published release"
+  },
+  "buildSha256": [
+    {
+      "path": "dist/adapters/opencode/index.js",
+      "sha256": "007b0b1c6fe52c12976c2d758dd70c17cedb20e128b0d2d715041a96b6cdec34"
+    },
+    {
+      "path": "dist/adapters/pi/watch.js",
+      "sha256": "efcabfde28d9b8df99f0a4467e20fdde2f5c2203388a35e948f5c1677900fa1c"
+    },
+    {
+      "path": "dist/adapters/hooks.js",
+      "sha256": "1a9aab0d0d9272511f269df0768d855930932617ef6947c6a44554d9bbb199a7"
+    },
+    {
+      "path": "dist/core/changes.js",
+      "sha256": "88ba22ff30a70fcf078f935cfa20e66ba43c0d51c7b112be869c7e02227a5ee0"
+    },
+    {
+      "path": "dist/core/mailbox.js",
+      "sha256": "2ef966cfa16d9545397d030cc094e8c2cb27e682474510734d2dc448a5bfdb87"
+    }
+  ],
+  "clients": [
+    {
+      "client": "pi",
+      "startedAt": "2026-10-25T16:45:18.112Z",
+      "version": "1.4.0",
+      "model": "gpt-6.1-sol",
+      "session": "relay-88465daa-8b1a-45db-92de-4070e4220e37",
+      "upstream": "UPSTREAM_5beea252008941cf96062f9f33ecf4a5",
+      "relay": "RELAY_0f8c98d780b4475b80151cd140d9da2b",
+      "messageEventId": "f44a10944a30499d8b5e5e71f63840cdbb95a3c93f6d37f85a63c9a856e14b60",
+      "receipts": [
+        {
+          "eventId": "a0f3c4cd998dc4162e1261744f93b3abeab3babf3da3741145e9713757f5572c",
+          "status": "delivered",
+          "at": "2026-10-25T16:45:28.822Z"
+        },
+        {
+          "eventId": "f44a10944a30499d8b5e5e71f63840cdbb95a3c93f6d37f85a63c9a856e14b60",
+          "status": "delivered",
+          "at": "2026-10-25T16:45:28.822Z"
+        }
+      ],
+      "automaticIdleWake": true,
+      "deduplicated": true,
+      "passed": true,
+      "finishedAt": "2026-10-25T16:45:34.940Z",
+      "evidenceDirectory": "worktree-relay-pi-nSYj1w"
+    },
+    {
+      "client": "codex",
+      "startedAt": "2026-10-25T16:45:18.112Z",
+      "version": "codex-cli 0.164.0",
+      "hookScope": "user (isolated CODEX_HOME)",
+      "model": "gpt-6.1-sol",
+      "session": "01a173f3-c7c9-7340-a190-214e6401f229",
+      "upstream": "UPSTREAM_dc17682bccdd4f108beb4d48f62776ab",
+      "relay": "RELAY_abfa32c4750745e988d168106cd20ea0",
+      "messageEventId": "43f4852b392d2adb65c30b0da52d1d55231ea123c85650f51d1d73e0d4b7e70c",
+      "receipts": [
+        {
+          "eventId": "11dddaa2b67cee76027c76bff68d76d6219af96a1b5a2dad1618c759f49a8562",
+          "status": "delivered",
+          "at": "2026-10-25T16:45:59.708Z"
+        },
+        {
+          "eventId": "43f4852b392d2adb65c30b0da52d1d55231ea123c85650f51d1d73e0d4b7e70c",
+          "status": "delivered",
+          "at": "2026-10-25T16:45:59.708Z"
+        }
+      ],
+      "deduplicated": true,
+      "automaticIdleWake": false,
+      "passed": true,
+      "finishedAt": "2026-10-25T16:46:30.153Z",
+      "evidenceDirectory": "worktree-relay-codex-8129TM"
+    },
+    {
+      "client": "opencode",
+      "startedAt": "2026-10-25T16:45:18.112Z",
+      "version": "opencode v2.1.2",
+      "session": "ses_e8c0c3800ffeuk2X4ydjoTTrB5",
+      "upstream": "UPSTREAM_d127c68dd50247aabb36000e817aef1a",
+      "relay": "RELAY_e9522b72ddb14ddba3c084edca1a307d",
+      "messageEventId": "2907f6bf0908a63851ba503f263c298a4ed4aa463c7ace532d3a4ff44b1ae6d7",
+      "model": {
+        "id": "deepseek-v4.1-flash",
+        "providerID": "amr"
+      },
+      "receipts": [
+        {
+          "eventId": "2907f6bf0908a63851ba503f263c298a4ed4aa463c7ace532d3a4ff44b1ae6d7",
+          "status": "delivered",
+          "at": "2026-10-25T16:45:24.544Z"
+        },
+        {
+          "eventId": "b9a6ab1331a200cbcef28f44707f0472b819d76726e152dba5baa2b44e1e4c64",
+          "status": "delivered",
+          "at": "2026-10-25T16:45:24.556Z"
+        }
+      ],
+      "deduplicated": true,
+      "automaticIdleWake": true,
+      "passed": true,
+      "finishedAt": "2026-10-25T16:45:32.282Z",
+      "evidenceDirectory": "worktree-relay-opencode-VtZ8Ob"
+    },
+    {
+      "client": "claude-code",
+      "startedAt": "2026-10-25T16:45:18.112Z",
+      "version": "2.1.310 (Claude Code)",
+      "model": [
+        "deepseek-v4.1-flash"
+      ],
+      "session": "3d8f5a40-8863-415c-9687-a77177790b85",
+      "upstream": "UPSTREAM_4ee6f61cfe0e40c7b3d8f2f3e43dc53f",
+      "relay": "RELAY_b04867e92e824fb1853f45cf60153e49",
+      "messageEventId": "567273265ddf1c6d65d0f916c9999087b16a958a95e51b61ea5a9cdbd3ccd0eb",
+      "receipts": [
+        {
+          "eventId": "567273265ddf1c6d65d0f916c9999087b16a958a95e51b61ea5a9cdbd3ccd0eb",
+          "status": "delivered",
+          "at": "2026-10-25T16:45:22.862Z"
+        },
+        {
+          "eventId": "f88b7c610f2569dfe2593b9de9de27816209f0bfb330b3405d725e7ab061b90f",
+          "status": "delivered",
+          "at": "2026-10-25T16:45:22.862Z"
+        }
+      ],
+      "deduplicated": true,
+      "automaticIdleWake": false,
+      "passed": true,
+      "finishedAt": "2026-10-25T16:45:28.499Z",
+      "evidenceDirectory": "worktree-relay-claude-code-NkMoYb"
+    }
+  ]
+}
