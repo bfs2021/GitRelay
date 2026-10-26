@@ -13,12 +13,14 @@ test("pi injects a follow-up, does not checkpoint an unpersisted queue, resumes 
   const entries: any[] = [];
   const messages: any[] = [];
   const warnings: string[] = [];
+  let busy = false;
   const pi = {
     appendEntry(customType: string, data: unknown) { entries.push({ type: "custom", customType, data }); },
-    sendMessage(message: unknown, options: unknown) { messages.push({ message, options }); },
+    sendMessage(message: unknown, options: unknown) { messages.push({ message, options }); busy = true; },
   } as unknown as ExtensionAPI;
   const ctx = {
-    cwd: f.b, sessionManager: { getBranch: () => entries, getSessionId: () => "pi-B" },
+    // Pi only counts queued user inputs here, not custom follow-ups.
+    cwd: f.b, hasPendingMessages: () => false, isIdle: () => !busy, sessionManager: { getBranch: () => entries, getSessionId: () => "pi-B" },
     ui: { notify(message: string) { warnings.push(message); } },
   } as unknown as ExtensionContext;
   let watcher = createWatcher(pi, ctx, "refs/heads/main");
@@ -31,11 +33,11 @@ test("pi injects a follow-up, does not checkpoint an unpersisted queue, resumes 
   await f.commit(f.main, "shared.txt", "upstream 2\n");
   await watcher.tick();
   assert.equal(messages.length, 1);
-  await watcher.stop();
-  watcher = createWatcher(pi, ctx, "refs/heads/main");
-  await watcher.tick(); // Lost queued message is re-detected; the checkpoint was not advanced.
+  busy = false; // Esc discarded the follow-up and the host settled; keep the same watcher.
+  await watcher.tick(); // Lost queued message is re-detected without a reload.
   assert.equal(messages.length, 2);
   entries.push({ type: "custom_message", ...messages[1].message });
+  busy = false;
   await watcher.stop();
   watcher = createWatcher(pi, ctx, "refs/heads/main");
   await watcher.tick();
@@ -46,6 +48,7 @@ test("pi injects a follow-up, does not checkpoint an unpersisted queue, resumes 
   assert.ok(messages[2].message.content.includes("来自 Claude Code"));
   assert.deepEqual(messages[2].message.details.eventIds, [sent.id]);
   entries.push({ type: "custom_message", ...messages[2].message });
+  busy = false;
   await watcher.tick();
   assert.equal(messages.length, 3);
   await watcher.stop();

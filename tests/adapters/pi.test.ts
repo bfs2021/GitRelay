@@ -8,27 +8,34 @@ import { listWorktrees } from "../../src/core/git.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import extension from "../../src/adapters/pi/index.ts";
 import { fixture } from "../helpers.ts";
-import { listSessions } from "../../src/core/mailbox.ts";
+import { listSessions, readReceipt, sendMessage, sessionKey } from "../../src/core/mailbox.ts";
+import { repository } from "../../src/core/store.ts";
 
 function harness(hasUI = true, cwd = process.cwd()) {
   const selections: (string | undefined)[] = [];
   const inputs: (string | undefined)[] = [];
+  const messages: any[] = [];
+  const entries: any[] = [];
+  let busy = false;
   let confirmed = false;
   let command: Parameters<ExtensionAPI["registerCommand"]>[1] | undefined;
   extension({
     registerFlag() {},
     getFlag() { return undefined; },
     on() { return () => {}; },
-    registerCommand(name, definition) {
+    sendMessage(message: unknown) { messages.push(message); busy = true; },
+    registerCommand(name: string, definition: Parameters<ExtensionAPI["registerCommand"]>[1]) {
       assert.equal(name, "worktree");
       command = definition;
     },
-  } as ExtensionAPI);
+  } as unknown as ExtensionAPI);
   const notices: { message: string; type?: string }[] = [];
   const ctx = {
     hasUI,
     cwd,
-    sessionManager: { getSessionId: () => "pi-test", getBranch: () => [] },
+    isIdle: () => !busy,
+    hasPendingMessages: () => false,
+    sessionManager: { getSessionId: () => "pi-test", getBranch: () => entries },
     ui: {
       notify(message: string, type?: string) { notices.push({ message, type }); },
       async select(_title: string, options: string[]) {
@@ -40,7 +47,7 @@ function harness(hasUI = true, cwd = process.cwd()) {
     },
   } as unknown as ExtensionCommandContext;
   assert.ok(command);
-  return { run: (args: string) => command!.handler(args, ctx), notices, selections, inputs, confirm() { confirmed = true; } };
+  return { run: (args: string) => command!.handler(args, ctx), notices, selections, inputs, messages, entries, confirm() { confirmed = true; } };
 }
 
 test("pi boolean CLI string false disables monitoring before accessing the worktree", async () => {
@@ -108,6 +115,34 @@ test("pi join and leave explicitly control the native session subscription", asy
   }
   assert.ok((await listSessions(f.b))[0].closedAt);
   assert.match(ui.notices.at(-1)!.message, /未读消息已保留/);
+});
+
+test("pi join and leave preserve queued relay IDs until the host persists them", async (t) => {
+  const f = await fixture(t);
+  const ui = harness(true, f.b);
+  try {
+    await ui.run("join");
+    const event = await sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "queued across join" });
+    await ui.run("join");
+    assert.equal(ui.messages.length, 1);
+    assert.deepEqual(ui.messages[0].details.eventIds, [event.id]);
+    const repo = await repository(f.b);
+    const key = sessionKey(repo, { adapter: "pi", session: "pi-test" }, "refs/heads/main");
+    assert.equal(await readReceipt(repo, key, event.id), undefined);
+    await ui.run("join");
+    await ui.run("join");
+    assert.equal(ui.messages.length, 1, "join must not duplicate an unpersisted custom follow-up");
+    await ui.run("leave");
+    await ui.run("join");
+    assert.equal(ui.messages.length, 1, "leave/join must not duplicate a host-owned follow-up either");
+    ui.entries.push({ type: "custom_message", ...ui.messages[0] });
+    await ui.run("join");
+    assert.equal((await readReceipt(repo, key, event.id))?.status, "delivered");
+    assert.equal(ui.messages.length, 1);
+    assert.ok(!ui.notices.some((notice) => notice.type === "error"));
+  } finally {
+    await ui.run("leave");
+  }
 });
 
 test("refuses dialog actions without a UI", async () => {

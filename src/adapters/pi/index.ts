@@ -13,13 +13,16 @@ export default function (pi: ExtensionAPI) {
   pi.registerFlag("worktree-watch", { type: "boolean", default: true, description: "自动向 agent 投递相关的上游变更" });
   pi.registerFlag("worktree-main-ref", { type: "string", default: "refs/heads/main", description: "监控的完整 Git 分支引用" });
   let watcher: ReturnType<typeof createWatcher> | undefined;
+  // A watcher may be replaced by join while its follow-up still belongs to the host.
+  let delivery: { pending?: string[] } = {};
   pi.on("session_start", async (_event, ctx) => {
     await watcher?.stop();
     watcher = undefined;
+    delivery = {};
     const enabled = pi.getFlag("worktree-watch");
     if (enabled === false || enabled === "false" || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return;
     try { await watchRoot(ctx.cwd); } catch { return; }
-    watcher = createWatcher(pi, ctx, String(pi.getFlag("worktree-main-ref") ?? "refs/heads/main"));
+    watcher = createWatcher(pi, ctx, String(pi.getFlag("worktree-main-ref") ?? "refs/heads/main"), delivery);
     await watcher.start();
   });
   pi.on("session_shutdown", async () => {
@@ -51,7 +54,7 @@ export default function (pi: ExtensionAPI) {
             ctx.ui.notify("已退出消息订阅；未读消息已保留，/worktree join 可重新加入。", "info");
           } else {
             await joinSession(options);
-            watcher = createWatcher(pi, ctx, ref);
+            watcher = createWatcher(pi, ctx, ref, delivery);
             await watcher.start();
             ctx.ui.notify("已加入消息订阅。", "info");
           }

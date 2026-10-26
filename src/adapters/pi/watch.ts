@@ -6,13 +6,12 @@ import { formatNotifications } from "../../core/mailbox.ts";
 export const WATCH_STATE = "worktree-watch-state"; // Legacy checkpoints remain readable.
 export const WATCH_MESSAGE = "worktree-upstream-change";
 
-export function createWatcher(pi: ExtensionAPI, ctx: ExtensionContext, ref: string) {
+export function createWatcher(pi: ExtensionAPI, ctx: ExtensionContext, ref: string, delivery: { pending?: string[] } = {}) {
   const abort = new AbortController();
   let active: Promise<void> | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
   let initialized = false;
   let initialCursor: Cursor | undefined;
-  let pending: string[] | undefined;
   let lastError = "";
 
   function isDelivered(id: string): boolean {
@@ -38,10 +37,11 @@ export function createWatcher(pi: ExtensionAPI, ctx: ExtensionContext, ref: stri
       cwd: ctx.cwd, ref, adapter: "pi", session: ctx.sessionManager.getSessionId(),
       signal: abort.signal, initialCursor, isDelivered,
       async deliver(notifications) {
-        if (pending && !pending.every(isDelivered)) return false;
+        // Custom follow-ups are not counted by hasPendingMessages; idle lets an Esc-discarded batch retry.
+        if (ctx.hasPendingMessages() || (delivery.pending && !delivery.pending.every(isDelivered) && !ctx.isIdle())) return false;
         const eventIds = notifications.map((notification) => notification.event.id);
         pi.sendMessage({ customType: WATCH_MESSAGE, content: formatNotifications(notifications), display: true, details: { eventIds, notifications } }, { triggerTurn: true, deliverAs: "followUp" });
-        pending = eventIds;
+        delivery.pending = eventIds;
         return false; // A queued message is not durable until Pi appends it to the session.
       },
     });
