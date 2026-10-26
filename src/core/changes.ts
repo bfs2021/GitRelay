@@ -13,6 +13,7 @@ export interface Change extends Cursor {
   eventId: string;
   previous: string;
   rewritten: boolean;
+  snapshot?: boolean;
   files: string[];
   commits: string[];
   patch: string;
@@ -61,8 +62,14 @@ async function patch(root: string, before: string, after: string, files: string[
 }
 
 export async function worktreeFiles(root: string, current: string, signal?: AbortSignal): Promise<Set<string>> {
-  const head = (await git(root, ["rev-parse", "HEAD"], signal)).trim();
-  const base = (await git(root, ["merge-base", current, head], signal)).trim();
+  const head = await git(root, ["rev-parse", "--verify", "HEAD^{commit}"], signal).then((value) => value.trim()).catch((cause) => {
+    signal?.throwIfAborted();
+    throw new Error("当前 worktree 的 HEAD 尚无可读取的提交；请创建首个提交或切回已有分支后重试。未读事件已保留。", { cause });
+  });
+  const base = await git(root, ["merge-base", current, head], signal).then((value) => value.trim()).catch((cause) => {
+    signal?.throwIfAborted();
+    throw new Error("当前 worktree 的 HEAD 与监控分支无法比较（可能没有共同祖先）；请切回共享历史的分支，或用 leave 停止此订阅。未读事件已保留。", { cause });
+  });
   const own = new Set<string>();
   for (const args of [
     ["diff", "--name-only", "--no-renames", "-z", base, head, "--"],
@@ -82,11 +89,14 @@ export async function inspectChange(cursor: Cursor, current: string, signal?: Ab
   const common = (await git(root, ["merge-base", cursor.commit, current], signal)).trim();
   if (!own.size) return undefined;
   const rewritten = common !== cursor.commit;
-  const commits = rewritten ? [current] : (await git(root, ["rev-list", "--first-parent", "--reverse", `${cursor.commit}..${current}`], signal)).trim().split("\n").filter(Boolean);
+  let steps = rewritten ? [] : (await git(root, ["rev-list", "--first-parent", "--parents", "--reverse", `${cursor.commit}..${current}`], signal)).trim().split("\n").filter(Boolean).map((line) => line.split(" "));
+  // An ancestor reached through a second parent is not the start of this first-parent chain.
+  const snapshot = rewritten || (steps.length > 0 && steps[0][1] !== cursor.commit);
+  if (snapshot) steps = [[current, cursor.commit]];
+  const commits = steps.map(([commit]) => commit);
   const ranges: { before: string; after: string; files: string[] }[] = [];
   const overlap = new Set<string>();
-  for (const commit of commits) {
-    const before = rewritten ? cursor.commit : (await git(root, ["rev-parse", `${commit}^1`], signal)).trim();
+  for (const [commit, before] of steps) {
     const changed = names(await git(root, ["diff", "--name-only", "--no-renames", "-z", before, commit, "--"], signal));
     const files = changed.filter((file) => own.has(file));
     if (files.length) {
@@ -107,7 +117,7 @@ export async function inspectChange(cursor: Cursor, current: string, signal?: Ab
   return {
     root, ref: cursor.ref, commit: current,
     eventId: `${cursor.ref}:${cursor.commit}..${current}`,
-    previous: cursor.commit, rewritten, commits,
+    previous: cursor.commit, rewritten, snapshot, commits,
     files: [...overlap].sort(), patch: preview,
   };
 }
@@ -117,7 +127,9 @@ export function formatChange(change: Change): string {
     "[自动上游变更事件：共享分支更新]",
     `事件：${change.eventId}`,
     `工作区：${JSON.stringify(change.root)}`,
-    change.rewritten ? "注意：主分支历史发生改写；以下是前后快照差异，不表示一次普通合并。" : "已按 first-parent 检查各次更新（包括 merge、squash 和直接提交）。",
+    change.rewritten ? "注意：主分支历史发生改写；以下是前后快照差异，不表示一次普通合并。"
+      : change.snapshot ? "旧位置不在当前 first-parent 链上；以下仅比较前后快照，不重放侧分支历史。"
+      : "已按 first-parent 检查各次更新（包括 merge、squash 和直接提交）。",
     "上游变更与你分支上尚未集成的提交、暂存区、未提交或未跟踪文件有同路径交集。",
     "这只是文件级相关性，不代表必然冲突；本地代码尚未自动同步。",
     "请重新读取相关文件和 Git 状态，判断本次变更对当前任务的影响。按无影响、需适配、需同步或被冲突阻塞给出结论，并在安全且已获授权时调整实现和测试。",

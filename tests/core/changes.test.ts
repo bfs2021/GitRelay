@@ -65,6 +65,24 @@ test("unrelated updates do not trigger, ref rewind is identified, subdirectories
   await assert.rejects(resolveMain(f.main, "--help"), /完整分支引用/);
 });
 
+test("fast-forward through a second parent compares snapshots without replaying old main edits", async (t) => {
+  const f = await fixture(t);
+  await writeFile(join(f.b, "shared.txt"), "local\n");
+  const previous = await f.commit(f.main, "shared.txt", "already on main\n");
+  await f.commit(f.a, "other.txt", "side change\n");
+  git(f.a, "merge", "--no-ff", "main", "-m", "merge main into side");
+  git(f.main, "merge", "--ff-only", "feature/a");
+  const current = await resolveMain(f.main, ref);
+  assert.equal(await inspectChange({ root: f.b, ref, commit: previous }, current), undefined);
+  await writeFile(join(f.b, "other.txt"), "local side\n");
+  const change = await inspectChange({ root: f.b, ref, commit: previous }, current);
+  assert.deepEqual(change?.files, ["other.txt"]);
+  assert.equal(change?.rewritten, false);
+  assert.equal(change?.snapshot, true);
+  assert.match(formatChange(change!), /快照/);
+  assert.ok(!change!.patch.includes("already on main"));
+});
+
 test("unusual paths use literal pathspecs and huge diff previews are bounded", async (t) => {
   const f = await fixture(t);
   const name = "[shared]* 中文\n.txt";

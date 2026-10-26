@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { readdir, stat } from "node:fs/promises";
+import { join, posix } from "node:path";
 import { formatChange, type Change } from "./changes.ts";
 import { hash, isCommit, isId, readJson, repository, withLock, writeJson, type Repository } from "./store.ts";
 
@@ -91,19 +91,37 @@ export function validateEvent(value: unknown, id: string): SharedEvent {
   if (event.kind === "upstream") {
     if (typeof event.ref !== "string" || !isCommit(event.previous) || !isCommit(event.commit)) throw new Error(`Invalid upstream event: ${id}`);
   } else if (event.kind === "message") {
-    validateMessage(event.text, event.files);
+    event.files = validateMessage(event.text, event.files, false);
   } else throw new Error(`Unknown shared event: ${id}`);
   return event;
 }
 
-export async function eventsIn(repo: Repository): Promise<SharedEvent[]> {
-  // shortcut: retained events are scanned; add an index if traffic grows despite safe GC.
+/** Session-filtered scans require the caller to hold that session's consumption lock. */
+export async function eventsIn(repo: Repository, key?: string, signal?: AbortSignal): Promise<SharedEvent[]> {
+  if (key !== undefined && !isId(key)) throw new Error("Invalid receipt key.");
+  signal?.throwIfAborted();
+  const receipts = new Set(key === undefined ? [] : await readdir(join(repo.directory, "receipts", key)).catch((error) => {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }));
+  // shortcut: directory names and receipts are still scanned; add an index if safe GC is insufficient.
+  const names = (await readdir(join(repo.directory, "events"))).filter((name) => /^[a-f0-9]{64}\.json$/.test(name));
   const events: SharedEvent[] = [];
-  for (const name of await readdir(join(repo.directory, "events"))) {
-    if (!/^[a-f0-9]{64}\.json$/.test(name)) continue;
-    const value = await readJson(join(repo.directory, "events", name));
-    if (value !== undefined) events.push(validateEvent(value, name.slice(0, -5)));
+  for (let offset = 0; offset < names.length; offset += 32) {
+    signal?.throwIfAborted();
+    const batch = await Promise.allSettled(names.slice(offset, offset + 32).map(async (name) => {
+      const id = name.slice(0, -5);
+      // A filename alone is not an acknowledgement: validate the receipt before skipping its event.
+      if (key !== undefined && receipts.has(name) && await readReceipt(repo, key, id)) return;
+      const value = await readJson(join(repo.directory, "events", name));
+      return value === undefined ? undefined : validateEvent(value, id);
+    }));
+    for (const result of batch) {
+      if (result.status === "rejected") throw result.reason;
+      if (result.value) events.push(result.value);
+    }
   }
+  signal?.throwIfAborted();
   return events.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
 }
 
@@ -123,6 +141,11 @@ export async function publishUpstream(repo: Repository, identity: Identity, ref:
   if (existing) {
     const event = validateEvent(existing, id);
     if (event.kind !== "upstream") throw new Error(`Expected upstream event: ${id}`);
+    const added = recipients.filter((key) => !event.recipients.includes(key));
+    if (added.length) {
+      event.recipients = [...new Set([...event.recipients, ...added])];
+      await writeJson(path, event);
+    }
     return event;
   }
   const event: UpstreamEvent = { id, kind: "upstream", ref, previous, commit, recipients, sender: { adapter: identity.adapter, session: identity.session, root: repo.root }, createdAt: new Date().toISOString() };
@@ -130,16 +153,27 @@ export async function publishUpstream(repo: Repository, identity: Identity, ref:
   return event;
 }
 
-function validateMessage(text: unknown, files: unknown): asserts files is string[] {
+function validateMessage(text: unknown, files: unknown, strict = true): string[] {
   if (typeof text !== "string" || !text.trim() || Buffer.byteLength(text) > 64 * 1024) throw new Error("Message text must be non-empty and at most 64 KiB.");
   if (!Array.isArray(files) || Buffer.byteLength(JSON.stringify({ text, files })) > 64 * 1024 || files.length > 1000 || !files.every((file) => typeof file === "string" && file.length > 0 && file.length <= 4096 && !file.includes("\0") && !/^(?:[\\/]|[A-Za-z]:)/.test(file) && !file.split(/[\\/]/).includes(".."))) throw new Error("Message files must be repository-relative paths (max 1000), without parent traversal.");
+  // Git emits slash-separated paths; backslashes are literal filename characters on Unix.
+  const normalized = files.map((file: string) => posix.normalize(process.platform === "win32" ? file.replaceAll("\\", "/") : file));
+  // Old producers accepted these literal paths; keep them non-matching rather than bricking the inbox.
+  if (strict && normalized.some((file) => file === "." || file.endsWith("/") || /^(?:[\\/]|[A-Za-z]:)/.test(file))) throw new Error("Message files must be repository-relative file paths, not directories.");
+  return [...new Set(normalized)];
 }
 
 export async function sendMessage(options: Identity & { cwd: string; ref?: string; text: string; files?: string[] }): Promise<AgentMessage> {
   validateIdentity(options);
-  const files = [...new Set(options.files ?? [])];
-  validateMessage(options.text, files);
+  const files = validateMessage(options.text, options.files ?? []);
   const repo = await repository(options.cwd);
+  for (const file of files) {
+    const info = await stat(join(repo.root, file)).catch((error) => {
+      if (error.code === "ENOENT") return undefined; // Deleted/renamed files can still be coordination targets.
+      throw error;
+    });
+    if (info?.isDirectory()) throw new Error(`Message files must name files, not directories: ${file}`);
+  }
   const ref = options.ref ?? "refs/heads/main";
   return withLock(join(repo.directory, "publish.lock"), async () => {
     await writeJson(join(repo.directory, "repo.json"), { id: repo.id, common: repo.common });

@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { inspectChange, readCursor, worktreeFiles, type Change, type Cursor } from "./changes.ts";
-import { eventsIn, publishUpstream, readReceipt, readSession, registerSession, sessionKey, validateIdentity, type Identity, type Notification } from "./mailbox.ts";
+import { eventsIn, publishUpstream, readSession, registerSession, sessionKey, validateIdentity, type Identity, type Notification } from "./mailbox.ts";
 import { BusyError, readJson, repository, withLock, writeJson } from "./store.ts";
 import { daemonStatus } from "./daemon-state.ts";
 import { readRef, synchronizeRef } from "./publisher.ts";
@@ -54,12 +54,10 @@ export async function consumeMailbox(options: MailboxOptions): Promise<Notificat
       const notifications: Notification[] = [];
       let localFiles: Set<string> | undefined;
       let size = 0;
-      for (const event of await eventsIn(repo)) {
+      for (const event of await eventsIn(repo, key, options.signal)) {
         options.signal?.throwIfAborted();
         if (!event.recipients.includes(key) || (options.upstreamOnly && event.kind !== "upstream")) continue;
         const receipt = join(receipts, `${event.id}.json`);
-        const existing = await readReceipt(repo, key, event.id);
-        if (existing) continue;
         if (options.isDelivered?.(event.id)) {
           await writeJson(receipt, { eventId: event.id, status: "delivered", at: new Date().toISOString() });
           continue;

@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { resolveMain } from "./changes.ts";
-import { publishUpstream, sessionsIn, type Identity } from "./mailbox.ts";
+import { publishUpstream, registerSession, sessionsIn, type Identity } from "./mailbox.ts";
 import { hash, isCommit, isId, readJson, writeJson, type Repository } from "./store.ts";
 
 export async function readRef(repo: Repository, ref: string): Promise<{ ref: string; commit: string; eventId?: string; checkedAt?: string } | undefined> {
@@ -17,8 +17,12 @@ export async function synchronizeRef(repo: Repository, ref: string, identity: Id
   const cursor = await readRef(repo, ref);
   let eventId = cursor?.eventId;
   if (cursor && cursor.commit !== current) {
-    const recipients = (await sessionsIn(repo)).filter((session) => !session.closedAt && session.ref === ref).map((session) => session.key);
-    const event = await publishUpstream(repo, identity, ref, cursor.commit, current, recipients, eventId);
+    const sessions = (await sessionsIn(repo)).filter((session) => !session.closedAt && session.ref === ref);
+    // Send-first sessions must migrate only history preceding their ordinary upstream subscription.
+    for (const session of sessions) {
+      if (!session.baseline) await registerSession({ ...repo, root: session.root }, session, ref, cursor.commit);
+    }
+    const event = await publishUpstream(repo, identity, ref, cursor.commit, current, sessions.map((session) => session.key), eventId);
     eventId = event.id;
   }
   signal?.throwIfAborted();

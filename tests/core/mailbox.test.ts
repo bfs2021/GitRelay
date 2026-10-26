@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { consumeMailbox } from "../../src/core/consumer.ts";
+import { collectGarbage } from "../../src/core/cleanup.ts";
 import { eventsIn, listSessions, sendMessage, sessionKey, type Notification } from "../../src/core/mailbox.ts";
 import { repository } from "../../src/core/store.ts";
 import { fixture, git } from "../helpers.ts";
@@ -81,17 +82,98 @@ test("file-scoped messages only reach overlapping worktrees, and new sessions do
   await consumeMailbox({ ...codex, session: "new-conversation", async deliver() { assert.fail("no historical replay"); } });
 });
 
+test("file aliases normalize before deduplication and delivery, including retained events", async (t) => {
+  const f = await fixture(t);
+  await writeFile(join(f.b, "shared.txt"), "local\n");
+  const received: Notification[] = [];
+  const options = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver(batch: Notification[]) { received.push(...batch); } };
+  await consumeMailbox(options);
+  const event = await sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "aliases", files: ["./shared.txt", "shared.txt", ".//./shared.txt"] });
+  assert.deepEqual(event.files, ["shared.txt"]);
+  // Old producers may have persisted aliases before normalization was introduced.
+  const repo = await repository(f.a);
+  await writeFile(join(repo.directory, "events", `${event.id}.json`), JSON.stringify({ ...event, files: ["./shared.txt"] }));
+  await consumeMailbox(options);
+  assert.equal(received[0]?.event.id, event.id);
+  await consumeMailbox(options);
+  assert.equal(received.length, 1);
+  for (const file of [".", "./", "src/", "./../secret", "src/../shared.txt", "/shared.txt", "C:\\shared.txt", "./C:/shared.txt"]) {
+    await assert.rejects(sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "invalid", files: [file] }), /repository-relative/);
+  }
+});
+
+test("Unix backslashes in filenames remain literal", { skip: process.platform === "win32" }, async (t) => {
+  const f = await fixture(t);
+  const file = "literal\\name.txt";
+  await writeFile(join(f.b, file), "local\n");
+  const options = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver() {} };
+  await consumeMailbox(options);
+  const event = await sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "literal", files: [`./${file}`] });
+  assert.deepEqual(event.files, [file]);
+  assert.equal((await consumeMailbox(options))[0]?.event.id, event.id);
+});
+
 test("bounded batches leave remaining messages for the next check", async (t) => {
   const f = await fixture(t);
   const received: string[] = [];
   const options = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver(batch: Notification[]) { received.push(...batch.map((n) => n.event.id)); } };
   await consumeMailbox(options);
-  for (let i = 0; i < 9; i++) await sendMessage({ cwd: f.a, adapter: "claude-code", session: "A", text: `message ${i}` });
+  for (let i = 0; i < 41; i++) await sendMessage({ cwd: f.a, adapter: "claude-code", session: "A", text: `message ${i}` });
+  const expected = (await eventsIn(await repository(f.b))).map((event) => event.id);
+  for (const count of [8, 16, 24, 32, 40, 41]) {
+    await consumeMailbox(options);
+    assert.equal(received.length, count);
+  }
   await consumeMailbox(options);
-  assert.equal(received.length, 8);
+  assert.deepEqual(received, expected);
+});
+
+test("confirmed event payloads are skipped per session, but unread scans and GC still validate them", async (t) => {
+  const f = await fixture(t);
+  let delivered = 0;
+  const b = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver() { delivered++; } };
+  const c = { ...b, cwd: f.c, session: "C" };
+  await consumeMailbox(b);
+  await consumeMailbox(c);
+  const event = await sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "pending" });
+  await consumeMailbox(b);
+  const repo = await repository(f.b);
+  const path = join(repo.directory, "events", `${event.id}.json`);
+  await writeFile(path, "{}");
+  assert.deepEqual(await consumeMailbox(b), []);
+  await assert.rejects(consumeMailbox(c), /Invalid shared event/);
+  await assert.rejects(eventsIn(repo), /Invalid shared event/);
+  await assert.rejects(collectGarbage(f.b, { apply: true, retentionDays: 0 }), /Invalid shared event/);
+  assert.equal(await readFile(path, "utf8"), "{}");
+  await writeFile(path, JSON.stringify(event));
+  await consumeMailbox(c);
+  assert.equal(delivered, 2);
+});
+
+test("receipt filtering validates contents and notices deletion without a process restart", async (t) => {
+  const f = await fixture(t);
+  let delivered = 0;
+  const options = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver() { delivered++; } };
   await consumeMailbox(options);
-  assert.equal(received.length, 9);
-  assert.equal(new Set(received).size, 9);
+  const event = await sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "pending" });
+  await consumeMailbox(options);
+  const repo = await repository(f.b);
+  const key = sessionKey(repo, options, ref);
+  const path = join(repo.directory, "receipts", key, `${event.id}.json`);
+  const receipt = JSON.parse(await readFile(path, "utf8"));
+  for (const invalid of [{ ...receipt, eventId: "wrong" }, { ...receipt, status: "unknown" }, { ...receipt, at: "invalid" }]) {
+    await writeFile(path, JSON.stringify(invalid));
+    await assert.rejects(consumeMailbox(options), /Invalid receipt/);
+    assert.equal(delivered, 1);
+  }
+  await rm(path);
+  await consumeMailbox(options);
+  await consumeMailbox(options);
+  assert.equal(delivered, 2);
+  const abort = new AbortController();
+  abort.abort();
+  await assert.rejects(eventsIn(repo, key, abort.signal), /abort/i);
+  await assert.rejects(eventsIn(repo, "../outside"), /Invalid receipt key/);
 });
 
 test("repo identity is shared across worktrees but not across separate clones", async (t) => {

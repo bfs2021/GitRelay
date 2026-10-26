@@ -84,7 +84,10 @@ export async function addWorktree(
 
 export async function removeWorktree(cwd: string, path: string): Promise<void> {
   const trees = await listWorktrees(cwd);
-  const target = await realpath(resolve(cwd, path));
+  const target = await realpath(resolve(cwd, path)).catch((error) => {
+    if (error.code === "ENOENT") return resolve(cwd, path); // Git can remove a prunable registration whose directory is gone.
+    throw error;
+  });
   const tree = trees.find((entry) => resolve(entry.path) === target);
   if (!tree) throw new Error("所选路径不是当前仓库的 worktree。");
   if (tree === trees[0] || tree.bare) throw new Error("不能删除主工作区或裸仓库。");
