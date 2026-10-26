@@ -137,12 +137,18 @@ export async function inspectChange(cursor: Cursor, current: string, signal?: Ab
   const commits = steps.map(([commit]) => commit);
   const ranges: { before: string; after: string; files: string[] }[] = [];
   const overlap = new Set<string>();
-  for (const [commit, before] of steps) {
-    const changed = names(await git(root, ["diff", "--name-only", "--no-renames", "-z", before, commit, "--"], signal));
-    const files = changed.filter(overlaps);
-    if (files.length) {
-      ranges.push({ before, after: commit, files });
-      for (const file of files) overlap.add(file);
+  for (let offset = 0; offset < steps.length; offset += 4) {
+    // Bound Git process fan-out and settle the batch before releasing the consumer's lock.
+    const batch = await Promise.allSettled(steps.slice(offset, offset + 4).map(async ([commit, before]) => {
+      const changed = names(await git(root, ["diff", "--name-only", "--no-renames", "-z", before, commit, "--"], signal));
+      return { before, after: commit, files: changed.filter(overlaps) };
+    }));
+    for (const result of batch) {
+      if (result.status === "rejected") throw result.reason;
+      if (result.value.files.length) {
+        ranges.push(result.value);
+        for (const file of result.value.files) overlap.add(file);
+      }
     }
   }
   if (!overlap.size) return undefined;

@@ -1,14 +1,32 @@
 import assert from "node:assert/strict";
-import { readFile, stat, utimes } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { consumeMailbox } from "../../src/core/consumer.ts";
 import { collectGarbage } from "../../src/core/cleanup.ts";
 import { sendMessage, sessionKey } from "../../src/core/mailbox.ts";
-import { BusyError, repository, withLock } from "../../src/core/store.ts";
+import { BusyError, readJson, repository, withLock } from "../../src/core/store.ts";
 import { fixture } from "../helpers.ts";
 
 const ref = "refs/heads/main";
+
+test("JSON reads preserve UTF-8, size boundaries, missing files and parse errors", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "git-relay-json-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "state.json");
+  assert.equal(await readJson(path), undefined);
+  const value = { text: "跨工作区消息 🚀" };
+  await writeFile(path, JSON.stringify(value));
+  assert.deepEqual(await readJson(path), value);
+  await writeFile(path, '"' + "x".repeat(2 * 1024 * 1024 - 2) + '"');
+  assert.equal((await readJson(path) as string).length, 2 * 1024 * 1024 - 2);
+  await writeFile(path, '"' + "x".repeat(2 * 1024 * 1024 - 1) + '"');
+  await assert.rejects(readJson(path), /State file exceeds 2 MiB/);
+  await writeFile(path, "{");
+  await assert.rejects(readJson(path), SyntaxError);
+  await assert.rejects(readJson(join(path, "child.json")), { code: "ENOTDIR" });
+});
 
 test("publish contention waits for send and GC instead of dropping an operation", async (t) => {
   const f = await fixture(t);

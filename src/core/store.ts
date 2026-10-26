@@ -1,10 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { readFile as readFileCallback } from "node:fs";
+import { lstat, mkdir, open, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
 import { git } from "./git.ts";
 import { watchRoot } from "./changes.ts";
+
+// Callback-backed reads reduce overhead when polling thousands of small receipt files.
+const readFile = promisify(readFileCallback);
 
 export const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 export const isId = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);

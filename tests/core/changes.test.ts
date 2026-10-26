@@ -52,6 +52,26 @@ test("does not lose intermediate edits reverted before the next poll", async (t)
   assert.ok(change?.patch.includes("temporary"));
 });
 
+test("history read batches preserve commit and patch order across empty and unrelated commits", async (t) => {
+  const f = await fixture(t);
+  await writeFile(join(f.b, "shared.txt"), "local\n");
+  const commits: string[] = [];
+  for (let index = 0; index < 11; index++) {
+    if (index === 4) {
+      git(f.main, "commit", "--allow-empty", "-m", "empty");
+      commits.push(git(f.main, "rev-parse", "HEAD").trim());
+    } else {
+      const relevant = index === 0 || index === 10;
+      commits.push(await f.commit(f.main, relevant ? "shared.txt" : "other.txt", relevant ? (index === 0 ? "temporary\n" : "base\n") : `${index}\n`));
+    }
+  }
+  const change = await inspectChange({ root: f.b, ref, commit: f.initial }, commits.at(-1)!);
+  assert.deepEqual(change?.files, ["shared.txt"]);
+  assert.deepEqual(change?.commits, commits);
+  assert.deepEqual([...change!.patch.matchAll(/\nCommit ([a-f0-9]+)\n/g)].map((match) => match[1]), [commits[0], commits[10]]);
+  assert.match(change!.patch, /temporary/);
+});
+
 test("unrelated updates do not trigger, ref rewind is identified, subdirectories resolve to root", async (t) => {
   const f = await fixture(t);
   await writeFile(join(f.b, "shared.txt"), "local\n");
