@@ -22,9 +22,9 @@ export async function runHook(agent: HookAgent, input: HookInput, ref: string, o
     await output({});
     return;
   }
-  let session = agent === "cursor" ? input.conversation_id : input.session_id;
-  if (typeof session !== "string" || !session) throw new Error("Hook input is missing a session/conversation ID.");
-  if (typeof input.agent_id === "string" && input.agent_id) session = `${session}/${input.agent_id}`;
+  const sessionId = agent === "cursor" ? input.conversation_id : input.session_id;
+  if (typeof sessionId !== "string" || !sessionId) throw new Error("Hook input is missing a session/conversation ID.");
+  const session = typeof input.agent_id === "string" && input.agent_id ? `${sessionId}/${input.agent_id}` : sessionId;
   let cwd = input.cwd;
   if (typeof cwd !== "string") {
     const roots = input.workspace_roots;

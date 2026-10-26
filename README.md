@@ -1,8 +1,10 @@
-# Worktree Agent Sync
+# Worktree Relay
 
 多个 coding agent 在同一项目的不同 Git worktree 中并行开发时，将主分支变更自动送给也在修改相关文件的 agent。
 
-保留 npm 包名 `pi-git-worktree` 和原有 pi `/worktree` 命令，但 Git 检测核心不依赖 pi，也可由 Claude Code、Codex、Cursor、OpenCode 和其他宿主复用。无运行时依赖，需要 Node.js 22.19+ 和 Git。
+npm 包名为 `worktree-relay`，提供同名 CLI，并保留 `worktree-sync` 和 pi `/worktree` 命令兼容已有配置。Git 检测核心不依赖 pi，也可由 Claude Code、Codex、Cursor、OpenCode v2 和其他宿主复用。无运行时依赖，需要 Node.js 22.19+ 和 Git。
+
+原 `pi-git-worktree` 用户需将安装源改为新包或新目录；状态目录、`WORKTREE_SYNC_*` 环境变量和会话身份保持不变，不迁移或清空既有消息。下面示例继续使用兼容命令 `worktree-sync`，也可等价替换为 `worktree-relay`。
 
 ## 工作方式
 
@@ -17,7 +19,7 @@ A 合入 main
 
 不是给人弹提示后等人转述，也不会自动覆盖文件、merge 或 rebase。默认无需常驻进程，也可启用可选 daemon 集中监控与清理；各平台共用用户级消息层，既能分享上游变更，也能主动发布跨 agent 协调消息。
 
-首次运行建立主分支基线；之后只投递相关更新。普通 merge、fast-forward、squash、直接提交均可感知。逐个检查 first-parent 更新，不遗漏两次轮询之间先修改后还原的文件。
+首次运行建立主分支基线；之后只投递相关更新。普通 merge、fast-forward、squash、直接提交均可感知。常规 first-parent 前进逐个检查，不遗漏两次轮询之间先修改后还原的文件；旧位置不在当前 first-parent 链上时只比较前后快照，不重放已有变更。
 
 ## 平台支持
 
@@ -27,7 +29,7 @@ A 合入 main
 | Claude Code | `src/adapters/claude-code/hooks.json` | lifecycle hooks 注入；Stop 可请求继续 |
 | Codex | `src/adapters/codex/hooks.json` | 支持 hooks 的版本中注入；Stop 可请求继续 |
 | Cursor | `src/adapters/cursor/hooks.json` | 工具结束后注入；completed stop 可跟进 |
-| OpenCode | `src/adapters/opencode/` | 已登记会话每 5 秒检查，idle 后 prompt |
+| OpenCode v2 | `src/adapters/opencode/` | 每 5 秒检查；宿主持久队列，忙时排队、空闲时唤醒 |
 | 通用宿主 | `worktree-sync check/watch` | JSON / NDJSON，由宿主负责会话路由 |
 
 **Hooks 不能唤醒已经空闲的会话。** pi/OpenCode 原生适配器才包含轮询及主动触发。各平台的接口版本、安装步骤和完整边界见 [接入指南](docs/integrations.md)。
@@ -37,7 +39,7 @@ A 合入 main
 ### pi
 
 ```sh
-pi install /absolute/path/to/pi-git-worktree
+pi install /absolute/path/to/worktree-relay
 # 重启或 /reload；每个 worktree 都加载本扩展。
 ```
 
@@ -51,7 +53,7 @@ pi --worktree-watch=false
 ### 其他 agent 与 CLI
 
 ```sh
-npm install -g /absolute/path/to/pi-git-worktree
+npm install -g /absolute/path/to/worktree-relay
 worktree-sync --help
 
 # 首次调用建立基线；相同会话复用同一 ID。
@@ -132,10 +134,12 @@ src/
 │   ├── claude-code/       # lifecycle hook 配置
 │   ├── codex/             # lifecycle hook 配置
 │   ├── cursor/            # hook 配置
-│   ├── opencode/          # 原生插件、会话登记与 idle 投递
+│   ├── opencode/          # v2 Promise 插件、会话登记与持久队列投递
 │   └── hooks.ts           # hook 输入校验和协议转换
 └── cli/main.ts            # 通用 CLI / hook runner
 scripts/build.mjs            # 用 Node 内置类型擦除生成可发布 JS
+scripts/benchmark.mjs        # 隔离事件存储的规模基准
+.github/workflows/check.yml  # macOS/Linux、Node 22.19/24 验证
 dist/                        # 构建产物（不提交）
 skills/worktree-coordination/
 docs/integrations.md
@@ -148,11 +152,17 @@ index.ts                    # 旧 pi 加载路径兼容入口
 ## 测试与边界
 
 ```sh
-npm run build
+npm ci --ignore-scripts
+npm run typecheck
 npm test
 npm pack --dry-run
+npm run benchmark
 ```
 
-测试使用临时仓库和隔离状态目录，覆盖多 worktree 合并、文件交集、改后还原、重命名、大 diff、历史改写、跨 agent 广播、独立回执、旧状态迁移、并发重试、pi 排队去重、OpenCode idle 投递、各 hook 协议及独立 CLI 进程间通信。真实客户端端到端验证仍需在对应版本上执行。
+类型检查覆盖核心、适配器和测试，构建方式不变。TypeScript、Node 与宿主类型只属于开发依赖；pi 的开发依赖中固定覆盖已修复的 `undici`，不新增运行时依赖。CI 在 macOS/Linux 的 Node `22.19.0` 和 `24` 上运行类型检查、测试、打包预检。
+
+性能基准使用 3 个会话、100/1,000/10,000 个保留广播事件，对比有无 daemon 的空轮询与 32 条离线消息恢复；不读取用户消息、不调用模型。结果和限制见 [性能记录](docs/performance.md)。
+
+测试使用临时仓库和隔离状态目录，覆盖多 worktree 合并、文件交集、路径规范化、first-parent 非连续历史、改后还原、重命名、大 diff、历史改写、跨 agent 广播、独立回执、旧状态迁移、并发重试、pi 排队去重、OpenCode v2 持久队列与取消、各 hook 协议及独立 CLI 进程间通信。已在本机 pi `1.4.0`、Codex CLI `0.164.0`、Claude Code `2.1.310`、OpenCode `2.1.2` 验证真实模型收件与去重，详见 [验收记录](docs/acceptance.md)。这不代表其他版本或 Cursor 已通过真实验收。
 
 这是文件级变更感知，不是语义冲突检测或同步引擎。无事件不代表没有跨文件影响；事件送达也不代表 agent 已完成适配。正常运行去重，崩溃边界允许重发；CLI/hooks 输出成功后确认投递，宿主是否实际接收需要宿主确认。只清理所有接收者已确认、超过保留期的事件；未读消息和关闭标记保留。daemon 不会突破宿主的空闲唤醒限制。更多限制与恢复步骤见 [接入指南](docs/integrations.md#状态恢复和限制)。

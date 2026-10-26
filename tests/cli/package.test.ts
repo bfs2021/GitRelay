@@ -6,7 +6,10 @@ const read = (path: string) => readFile(new URL(`../../${path}`, import.meta.url
 
 test("package exposes portable CLI, pi resources and the shared coordination skill", async () => {
   const manifest = JSON.parse(await read("package.json"));
-  assert.equal(manifest.bin["worktree-sync"], "./dist/cli/main.js");
+  assert.equal(manifest.name, "worktree-relay");
+  assert.equal(manifest.bin["worktree-relay"], "./dist/cli/main.js");
+  assert.equal(manifest.bin["worktree-sync"], manifest.bin["worktree-relay"]);
+  assert.match(await read("README.md"), /^# Worktree Relay\n/);
   assert.ok(await read("dist/cli/main.js"));
   for (const name of ["publisher", "sessions", "cleanup", "daemon-state", "daemon"]) assert.ok(await read(`dist/core/${name}.js`));
   for (const name of ["maintenance", "acceptance"]) assert.ok(await read(`docs/${name}.md`));

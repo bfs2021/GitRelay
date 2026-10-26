@@ -38,7 +38,7 @@ async function main() {
   const [command, agent] = positionals;
   const days = values["retention-days"].trim() ? Number(values["retention-days"]) : NaN;
   if (values.help || !command) {
-    process.stdout.write("worktree-sync check|watch --session ID [--agent NAME] [--cwd PATH] [--ref refs/heads/main]\nworktree-sync send --session ID --agent NAME --message TEXT [--file PATH] [--cwd PATH]\nworktree-sync sessions [--cwd PATH]\nworktree-sync join|leave --session ID [--agent NAME] [--cwd PATH] [--ref REF]\nworktree-sync gc [--cwd PATH] [--apply|--dry-run] [--retention-days 7]\nworktree-sync daemon [status] [--interval-ms 5000] [--retention-days 7]\nworktree-sync hook claude-code|codex|cursor < hook-input.json\n");
+    process.stdout.write("Worktree Relay (worktree-relay; worktree-sync is a compatibility alias)\n\nworktree-sync check|watch --session ID [--agent NAME] [--cwd PATH] [--ref refs/heads/main]\nworktree-sync send --session ID --agent NAME --message TEXT [--file PATH] [--cwd PATH]\nworktree-sync sessions [--cwd PATH]\nworktree-sync join|leave --session ID [--agent NAME] [--cwd PATH] [--ref REF]\nworktree-sync gc [--cwd PATH] [--apply|--dry-run] [--retention-days 7]\nworktree-sync daemon [status] [--interval-ms 5000] [--retention-days 7]\nworktree-sync hook claude-code|codex|cursor < hook-input.json\n");
     return;
   }
   if (command === "hook") {

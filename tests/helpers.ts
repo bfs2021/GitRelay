@@ -8,7 +8,7 @@ export function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", ["-C", cwd, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 
-export async function fixture(t: { after(fn: () => Promise<void>): void }) {
+export async function fixture(t: { after(fn: () => void | Promise<void>): void }) {
   const temp = await mkdtemp(join(tmpdir(), "worktree-sync-"));
   t.after(() => rm(temp, { recursive: true, force: true }));
   const root = await realpath(temp);
