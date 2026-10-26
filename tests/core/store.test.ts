@@ -1,15 +1,34 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { consumeMailbox } from "../../src/core/consumer.ts";
 import { collectGarbage } from "../../src/core/cleanup.ts";
 import { sendMessage, sessionKey } from "../../src/core/mailbox.ts";
-import { BusyError, readJson, repository, withLock } from "../../src/core/store.ts";
+import { BusyError, readJson, repository, withLock, writeJson } from "../../src/core/store.ts";
 import { fixture } from "../helpers.ts";
 
 const ref = "refs/heads/main";
+
+test("JSON replacement preserves values and cleans temporary files on write or rename failure", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "git-relay-json-write-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "state.json");
+  await writeJson(path, { text: "original" });
+  await writeJson(path, { text: "更新 🚀" });
+  assert.deepEqual(await readJson(path), { text: "更新 🚀" });
+  if (process.platform !== "win32") assert.equal((await stat(path)).mode & 0o777, 0o600);
+  await assert.rejects(writeJson(path, { unsupported: 1n }), TypeError);
+  assert.deepEqual(await readJson(path), { text: "更新 🚀" });
+  const blocked = join(directory, "blocked");
+  await mkdir(blocked);
+  await writeFile(join(blocked, "keep"), "preserved");
+  await assert.rejects(writeJson(blocked, { text: "cannot replace a directory" }));
+  assert.equal(await readFile(join(blocked, "keep"), "utf8"), "preserved");
+  await assert.rejects(writeJson(join(directory, "missing", "state.json"), {}), { code: "ENOENT" });
+  assert.deepEqual((await readdir(directory)).sort(), ["blocked", "state.json"]);
+});
 
 test("JSON reads preserve UTF-8, size boundaries, missing files and parse errors", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "git-relay-json-"));

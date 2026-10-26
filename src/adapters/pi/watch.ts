@@ -14,14 +14,6 @@ export function createWatcher(pi: ExtensionAPI, ctx: ExtensionContext, ref: stri
   let initialCursor: Cursor | undefined;
   let lastError = "";
 
-  function isDelivered(id: string): boolean {
-    return ctx.sessionManager.getBranch().some((entry) => {
-      if (entry.type !== "custom_message" || entry.customType !== WATCH_MESSAGE) return false;
-      const ids = (entry.details as { eventIds?: unknown } | undefined)?.eventIds;
-      return Array.isArray(ids) && ids.includes(id);
-    });
-  }
-
   async function check() {
     if (abort.signal.aborted) return;
     if (!initialized) {
@@ -32,6 +24,25 @@ export function createWatcher(pi: ExtensionAPI, ctx: ExtensionContext, ref: stri
         initialCursor = readCursor(value, root, ref) ?? initialCursor;
       }
       initialized = true;
+    }
+    let delivered: Set<string> | undefined;
+    let leaf: string | null;
+    let session: string;
+    function isDelivered(id: string): boolean {
+      const currentLeaf = ctx.sessionManager.getLeafId();
+      const currentSession = ctx.sessionManager.getSessionId();
+      // Pi's history is append-only; refresh immediately when its branch/session changes.
+      if (!delivered || leaf !== currentLeaf || session !== currentSession) {
+        delivered = new Set();
+        for (const entry of ctx.sessionManager.getBranch()) {
+          if (entry.type !== "custom_message" || entry.customType !== WATCH_MESSAGE) continue;
+          const ids = (entry.details as { eventIds?: unknown } | undefined)?.eventIds;
+          if (Array.isArray(ids)) for (const eventId of ids) if (typeof eventId === "string") delivered.add(eventId);
+        }
+        leaf = currentLeaf;
+        session = currentSession;
+      }
+      return delivered.has(id);
     }
     await consumeMailbox({
       cwd: ctx.cwd, ref, adapter: "pi", session: ctx.sessionManager.getSessionId(),

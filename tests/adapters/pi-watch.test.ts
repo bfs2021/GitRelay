@@ -1,11 +1,47 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { createWatcher, WATCH_MESSAGE } from "../../src/adapters/pi/watch.ts";
 import { fixture } from "../helpers.ts";
-import { sendMessage } from "../../src/core/mailbox.ts";
+import { eventsIn, sendMessage, sessionKey } from "../../src/core/mailbox.ts";
+import { readJson, repository } from "../../src/core/store.ts";
+
+test("pi refreshes native acknowledgements when the branch advances during a scan or rewinds", async (t) => {
+  const f = await fixture(t);
+  const manager = SessionManager.inMemory(f.b);
+  const messages: any[] = [];
+  const warnings: string[] = [];
+  const watcher = createWatcher({ sendMessage(message: unknown) { messages.push(message); } } as unknown as ExtensionAPI, {
+    cwd: f.b, hasPendingMessages: () => false, isIdle: () => true, sessionManager: manager,
+    ui: { notify(message: string) { warnings.push(message); } },
+  } as unknown as ExtensionContext, "refs/heads/main");
+  t.after(() => watcher.stop());
+  await watcher.tick();
+  for (const text of ["first", "second"]) await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text });
+  const repo = await repository(f.b);
+  const [first, second] = await eventsIn(repo);
+  const leaf = manager.appendCustomMessageEntry(WATCH_MESSAGE, "accepted", false, { eventIds: [first.id] });
+  const getLeafId = manager.getLeafId.bind(manager);
+  let calls = 0;
+  manager.getLeafId = () => {
+    if (++calls === 2) manager.appendCustomMessageEntry(WATCH_MESSAGE, "accepted during scan", false, { eventIds: [second.id] });
+    return getLeafId();
+  };
+  await watcher.tick();
+  assert.equal(messages.length, 0);
+  assert.deepEqual(warnings, []);
+  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  for (const event of [first, second]) assert.equal((await readJson(join(repo.directory, "receipts", key, `${event.id}.json`)) as { status: string }).status, "delivered");
+  manager.branch(leaf);
+  await rm(join(repo.directory, "receipts", key, `${second.id}.json`));
+  await watcher.tick();
+  assert.equal(messages.length, 1);
+  assert.deepEqual(messages[0].details.eventIds, [second.id]);
+  assert.deepEqual(warnings, []);
+});
 
 test("pi injects a follow-up, does not checkpoint an unpersisted queue, resumes without duplicates", async (t) => {
   const f = await fixture(t);
@@ -20,7 +56,7 @@ test("pi injects a follow-up, does not checkpoint an unpersisted queue, resumes 
   } as unknown as ExtensionAPI;
   const ctx = {
     // Pi only counts queued user inputs here, not custom follow-ups.
-    cwd: f.b, hasPendingMessages: () => false, isIdle: () => !busy, sessionManager: { getBranch: () => entries, getSessionId: () => "pi-B" },
+    cwd: f.b, hasPendingMessages: () => false, isIdle: () => !busy, sessionManager: { getBranch: () => entries, getSessionId: () => "pi-B", getLeafId: () => String(entries.length) },
     ui: { notify(message: string) { warnings.push(message); } },
   } as unknown as ExtensionContext;
   let watcher = createWatcher(pi, ctx, "refs/heads/main");

@@ -72,13 +72,16 @@ export async function worktreeFiles(root: string, current: string, signal?: Abor
     throw new Error("The current worktree HEAD cannot be compared with the monitored branch (possibly no common ancestor). Switch to a branch with shared history or use leave to stop this subscription. Unread events are preserved.", { cause });
   });
   const own = new Set<string>();
-  for (const args of [
+  // Independent reads; settle every child before releasing the consumer lock on failure.
+  const reads = await Promise.allSettled([
     ["diff", "--name-only", "--no-renames", "-z", base, head, "--"],
     ["diff", "--name-only", "--no-renames", "-z", "--cached", "--"],
     ["diff", "--name-only", "--no-renames", "-z", "--"],
     ["ls-files", "--others", "-z"],
-  ]) {
-    for (const file of names(await git(root, args, signal))) own.add(file);
+  ].map((args) => git(root, args, signal)));
+  for (const result of reads) {
+    if (result.status === "rejected") throw result.reason;
+    for (const file of names(result.value)) own.add(file);
   }
   return own;
 }
@@ -105,6 +108,37 @@ export async function pathMatcher(root: string, files: Set<string>, signal?: Abo
     }
     return false;
   };
+}
+
+async function historyFiles(root: string, steps: string[][], snapshot: boolean, signal?: AbortSignal): Promise<string[][]> {
+  const read = async ([commit, before]: string[]) => names(await git(root, ["diff", "--name-only", "--no-renames", "-z", before, commit, "--"], signal));
+  if (snapshot || steps.length === 1) return [await read(steps[0])];
+  let output: string;
+  try {
+    output = await git(root, ["log", "--no-walk=unsorted", "--diff-merges=first-parent", "--format=%x00%H", "--always", "--no-show-signature", "--no-notes", "--no-color", "--name-only", "--no-renames", "-z", ...steps.map(([commit]) => commit), "--"], signal);
+  } catch (error) {
+    // Preserve the per-commit size limit if combining otherwise valid outputs exceeds it.
+    if ((error as Error & { cause?: { code?: string } }).cause?.code !== "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") throw error;
+    const files: string[][] = [];
+    for (let offset = 0; offset < steps.length; offset += 4) {
+      const batch = await Promise.allSettled(steps.slice(offset, offset + 4).map(read));
+      for (const result of batch) {
+        if (result.status === "rejected") throw result.reason;
+        files.push(result.value);
+      }
+    }
+    return files;
+  }
+  // Empty NUL fields delimit commits; filenames cannot contain NUL, even when they contain newlines.
+  const records = output.slice(1).split("\0\0");
+  if (!output.startsWith("\0") || !output.endsWith("\0") || records.length !== steps.length) throw new Error("Invalid Git history output.");
+  return records.map((record, index) => {
+    const [commit] = steps[index];
+    if (record !== commit && !record.startsWith(`${commit}\0`)) throw new Error("Unexpected Git history order.");
+    const files = record.slice(commit.length + 1);
+    if (files && !files.startsWith("\n")) throw new Error("Invalid Git history filenames.");
+    return names(files.slice(1));
+  });
 }
 
 export async function inspectChange(cursor: Cursor, current: string, signal?: AbortSignal): Promise<Change | undefined> {
@@ -137,17 +171,15 @@ export async function inspectChange(cursor: Cursor, current: string, signal?: Ab
   const commits = steps.map(([commit]) => commit);
   const ranges: { before: string; after: string; files: string[] }[] = [];
   const overlap = new Set<string>();
-  for (let offset = 0; offset < steps.length; offset += 4) {
-    // Bound Git process fan-out and settle the batch before releasing the consumer's lock.
-    const batch = await Promise.allSettled(steps.slice(offset, offset + 4).map(async ([commit, before]) => {
-      const changed = names(await git(root, ["diff", "--name-only", "--no-renames", "-z", before, commit, "--"], signal));
-      return { before, after: commit, files: changed.filter(overlaps) };
-    }));
-    for (const result of batch) {
-      if (result.status === "rejected") throw result.reason;
-      if (result.value.files.length) {
-        ranges.push(result.value);
-        for (const file of result.value.files) overlap.add(file);
+  for (let offset = 0; offset < steps.length; offset += 32) {
+    const batch = steps.slice(offset, offset + 32);
+    const changed = await historyFiles(root, batch, snapshot, signal);
+    for (let index = 0; index < batch.length; index++) {
+      const [after, before] = batch[index];
+      const files = changed[index].filter(overlaps);
+      if (files.length) {
+        ranges.push({ before, after, files });
+        for (const file of files) overlap.add(file);
       }
     }
   }

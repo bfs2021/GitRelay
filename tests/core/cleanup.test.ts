@@ -11,6 +11,34 @@ import { fixture } from "../helpers.ts";
 const ref = "refs/heads/main";
 const receiver = (cwd: string, session: string) => ({ cwd, ref, adapter: "codex", session, async deliver() {} });
 
+test("GC revalidates migration metadata on every run and still checks each receipt", async (t) => {
+  const f = await fixture(t);
+  const b = receiver(f.b, "B");
+  await consumeMailbox(b);
+  const first = await sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "first" });
+  const second = await sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "second" });
+  await consumeMailbox(b);
+  const repo = await repository(f.b);
+  const key = first.recipients[0];
+  const path = join(repo.directory, "sessions", `${key}.json`);
+  const session = await readJson(path) as object;
+  assert.equal((await collectGarbage(f.b, { retentionDays: 0 })).eligible.length, 2);
+  await writeJson(path, { ...session, migrated: false });
+  const unmigrated = await collectGarbage(f.b, { apply: true, retentionDays: 0 });
+  assert.equal(unmigrated.kept.length, 2);
+  assert.ok(unmigrated.kept.every(({ reason }) => reason === "migration"));
+  await writeJson(path, { key });
+  await assert.rejects(collectGarbage(f.b, { apply: true, retentionDays: 0 }), /Invalid session/);
+  await rm(path);
+  assert.equal((await collectGarbage(f.b, { apply: true, retentionDays: 0 })).kept.length, 2);
+  await writeJson(path, session);
+  await rm(join(repo.directory, "receipts", key, `${second.id}.json`));
+  const applied = await collectGarbage(f.b, { apply: true, retentionDays: 0 });
+  assert.deepEqual(applied.removed, [first.id]);
+  assert.deepEqual(applied.kept, [{ id: second.id, reason: "unconfirmed" }]);
+  assert.deepEqual((await eventsIn(repo)).map(({ id }) => id), [second.id]);
+});
+
 test("GC previews by default, keeps any unconfirmed recipient, and only removes event/receipts", async (t) => {
   const f = await fixture(t);
   const b = receiver(f.b, "B");

@@ -65,14 +65,19 @@ export async function readSession(repo: Repository, key: string): Promise<Sessio
 
 export async function sessionsIn(repo: Repository): Promise<Session[]> {
   const sessions: Session[] = [];
-  for (const name of await readdir(join(repo.directory, "sessions"))) {
-    if (!/^[a-f0-9]{64}\.json$/.test(name)) continue;
-    const value = await readSession(repo, name.slice(0, -5));
-    if (value) sessions.push(value);
+  const names = (await readdir(join(repo.directory, "sessions"))).filter((name) => /^[a-f0-9]{64}\.json$/.test(name));
+  for (let offset = 0; offset < names.length; offset += 32) {
+    // Settle all reads before returning an error to a caller holding publish.lock.
+    const batch = await Promise.allSettled(names.slice(offset, offset + 32).map((name) => readSession(repo, name.slice(0, -5))));
+    for (const result of batch) {
+      if (result.status === "rejected") throw result.reason;
+      if (result.value) sessions.push(result.value);
+    }
   }
   return sessions;
 }
 
+/** Caller owns publish.lock, also held by GC while reusing validated migration state. */
 export async function registerSession(repo: Repository, identity: Identity, ref: string, baseline?: string): Promise<Session> {
   const key = sessionKey(repo, identity, ref);
   const path = join(repo.directory, "sessions", `${key}.json`);

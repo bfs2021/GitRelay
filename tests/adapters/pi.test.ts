@@ -36,7 +36,7 @@ function harness(hasUI = true, cwd = process.cwd()) {
     cwd,
     isIdle: () => !busy,
     hasPendingMessages: () => false,
-    sessionManager: { getSessionId: () => "pi-test", getBranch: () => entries },
+    sessionManager: { getSessionId: () => "pi-test", getBranch: () => entries, getLeafId: () => String(entries.length) },
     ui: {
       notify(message: string, type?: string) { notices.push({ message, type }); },
       async select(_title: string, options: string[]) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -81,6 +81,22 @@ test("auto-sync refuses divergence, other worktrees and active Git operations", 
   await f.commit(f.main, "shared.txt", "cloud\n");
   assert.match((await syncBranch(f.c, "feature/c")).reason!, /diverged/);
   assert.equal(git(f.c, "rev-parse", "HEAD").trim(), local);
+});
+
+test("auto-sync checks every operation marker in its linked worktree", async (t) => {
+  const f = await setup(t);
+  for (const name of ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer", "BISECT_START"]) {
+    const path = git(f.b, "rev-parse", "--path-format=absolute", "--git-path", name).trim();
+    try {
+      if (["rebase-merge", "rebase-apply", "sequencer"].includes(name)) await mkdir(path);
+      else await writeFile(path, `${f.initial}\n`);
+      const result = await syncBranch(f.b, "feature/b");
+      assert.equal(result.state, "blocked", result.reason);
+      assert.ok(result.reason?.includes(`(${name})`), result.reason);
+      assert.equal(git(f.b, "rev-parse", "HEAD").trim(), f.initial);
+    } finally { await rm(path, { recursive: true, force: true }); }
+  }
+  assert.equal((await syncBranch(f.b, "feature/b")).state, "up-to-date");
 });
 
 test("missing upstream and failed fetch never move the local branch", async (t) => {

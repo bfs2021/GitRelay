@@ -60,8 +60,9 @@ export async function writeJson(path: string, value: unknown): Promise<void> {
   try {
     await writeFile(temporary, JSON.stringify(value), { mode: 0o600, flag: "wx" });
     await rename(temporary, path);
-  } finally {
+  } catch (error) {
     await rm(temporary, { force: true });
+    throw error;
   }
 }
 

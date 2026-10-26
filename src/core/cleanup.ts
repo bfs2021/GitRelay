@@ -31,6 +31,8 @@ export async function collectRepository(repo: Repository, options: CleanupOption
   const days = retentionDays(options.retentionDays);
   const report: CleanupReport = { dryRun: !options.apply, retentionDays: days, eligible: [], removed: [], kept: [] };
   return withLock(join(repo.directory, "publish.lock"), async () => {
+    // Session metadata cannot change through the relay while this publication lock is held.
+    const migrated = new Set<string>();
     const approved: SharedEvent[] = [];
     for (const name of await readdir(join(repo.directory, "trash"))) {
       options.signal?.throwIfAborted();
@@ -50,8 +52,11 @@ export async function collectRepository(repo: Repository, options: CleanupOption
             for (const key of event.recipients) {
               const receipt = await readReceipt(repo, key, event.id);
               if (!receipt) { report.kept.push({ id: event.id, reason: "unconfirmed" }); return; }
-              const session = await readSession(repo, key);
-              if (!session?.migrated) { report.kept.push({ id: event.id, reason: "migration" }); return; }
+              if (!migrated.has(key)) {
+                const session = await readSession(repo, key);
+                if (!session?.migrated) { report.kept.push({ id: event.id, reason: "migration" }); return; }
+                migrated.add(key);
+              }
               latest = Math.max(latest, Date.parse(receipt.at));
             }
             if (latest > cutoff) { report.kept.push({ id: event.id, reason: "retention" }); return; }

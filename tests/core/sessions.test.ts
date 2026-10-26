@@ -1,14 +1,36 @@
 import assert from "node:assert/strict";
+import { readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { consumeMailbox } from "../../src/core/consumer.ts";
 import { collectGarbage } from "../../src/core/cleanup.ts";
-import { listSessions, sendMessage, type Notification } from "../../src/core/mailbox.ts";
+import { listSessions, sendMessage, sessionKey, sessionsIn, type Notification } from "../../src/core/mailbox.ts";
 import { joinSession, leaveSession } from "../../src/core/sessions.ts";
 import { repository, withLock, writeJson } from "../../src/core/store.ts";
 import { fixture } from "../helpers.ts";
 
 const ref = "refs/heads/main";
+
+test("session scans preserve all batches, reject invalid records and refresh after removal", async (t) => {
+  const f = await fixture(t);
+  const repo = await repository(f.b);
+  const directory = join(repo.directory, "sessions");
+  const at = new Date().toISOString();
+  const expected = Array.from({ length: 67 }, (_, index) => {
+    const identity = { adapter: "test", session: `session-${index}` };
+    return { ...identity, key: sessionKey(repo, identity, ref), root: repo.root, ref, createdAt: at, lastSeen: at, migrated: true, ...(index % 2 ? { closedAt: at } : {}) };
+  });
+  await Promise.all(expected.map((session) => writeJson(join(directory, `${session.key}.json`), session)));
+  await writeJson(join(directory, "unrelated.json"), { ignored: true });
+  const names = (await readdir(directory)).filter((name) => /^[a-f0-9]{64}\.json$/.test(name));
+  const byKey = new Map(expected.map((session) => [session.key, session]));
+  assert.deepEqual(await sessionsIn(repo), names.map((name) => byKey.get(name.slice(0, -5))));
+  const invalid = join(directory, names[32]);
+  await writeJson(invalid, { key: names[32].slice(0, -5) });
+  await assert.rejects(sessionsIn(repo), /Invalid session/);
+  await rm(invalid);
+  assert.equal((await sessionsIn(repo)).length, 66);
+});
 
 test("explicit leave excludes future messages but keeps the old inbox for an explicit rejoin", async (t) => {
   const f = await fixture(t);

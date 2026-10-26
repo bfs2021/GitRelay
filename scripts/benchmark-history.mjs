@@ -10,6 +10,9 @@ const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, "-c", "user.name=B
 try {
   const main = join(temporary, "main");
   git(temporary, "init", "-b", "main", main);
+  // Keep background Git housekeeping out of measurements and temporary-directory teardown.
+  git(main, "config", "gc.auto", "0");
+  git(main, "config", "maintenance.auto", "false");
   await writeFile(join(main, "shared.txt"), "base\n");
   await writeFile(join(main, "other.txt"), "base\n");
   git(main, "add", ".");
@@ -43,5 +46,5 @@ try {
     console.log(JSON.stringify({ commits: count, inspectMs: Math.round(samples.sort((a, b) => a - b)[1] * 10) / 10 }));
   }
 } finally {
-  await rm(temporary, { recursive: true, force: true });
+  await rm(temporary, { recursive: true, force: true, maxRetries: 3 });
 }
