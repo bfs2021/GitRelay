@@ -2,6 +2,8 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
+[贡献指南（英文）](CONTRIBUTING.md) | [MIT 许可证](LICENSE)
+
 面向 Git 分支与工作树的多 coding agent 协作工具：投递相关上游变更、共享协作消息、监控本地与 GitHub 分支状态，自动分支同步暂不可用。pi 还提供交互式工作树管理。
 
 npm 包名为 `git-relay`，提供同名 CLI，并保留 `worktree-relay`、`worktree-sync` 和 pi `/worktree` 命令兼容已有配置。Git 检测核心不依赖 pi，也可由 Claude Code、Codex、Cursor、OpenCode v2 和其他宿主复用。无运行时依赖，需要 Node.js 22.19+ 和 Git。

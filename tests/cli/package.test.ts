@@ -15,6 +15,7 @@ const read = (path: string) => readFile(new URL(`../../${path}`, import.meta.url
 test("package exposes portable CLI, pi resources and the shared coordination skill", async () => {
   const manifest = JSON.parse(await read("package.json"));
   assert.equal(manifest.name, "git-relay");
+  assert.equal(manifest.license, "MIT");
   assert.equal(manifest.bin["git-relay"], "./dist/cli/main.js");
   assert.equal(manifest.bin["worktree-relay"], manifest.bin["git-relay"]);
   assert.equal(manifest.bin["worktree-sync"], manifest.bin["git-relay"]);
@@ -41,6 +42,10 @@ test("Codex plugin bundles its runtime and runs hooks from an installed path con
   await exec(process.execPath, [join(root, "scripts/build-codex-plugin.mjs")]);
   const installed = join(f.root, "installed plugin");
   await cp(join(root, ".codex/plugin-build"), installed, { recursive: true });
+  const installedPackage = JSON.parse(await readFile(join(installed, "package.json"), "utf8"));
+  assert.equal(installedPackage.license, "MIT");
+  assert.equal(await readFile(join(installed, "LICENSE"), "utf8"), await read("LICENSE"));
+  assert.equal(await readFile(join(installed, "CONTRIBUTING.md"), "utf8"), await read("CONTRIBUTING.md"));
   const plugin = JSON.parse(await readFile(join(installed, ".codex-plugin/plugin.json"), "utf8"));
   const catalog = JSON.parse(await read(".agents/plugins/marketplace.json"));
   assert.equal(catalog.plugins[0].name, plugin.name);

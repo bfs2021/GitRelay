@@ -2,6 +2,8 @@
 
 [English](README.md) | [Simplified Chinese](README.zh-CN.md)
 
+[Contributing](CONTRIBUTING.md) | [MIT License](LICENSE)
+
 Coordinate coding agents across Git branches and worktrees. GitRelay delivers relevant upstream changes, shares agent messages, and monitors local and GitHub branch state. pi also provides interactive worktree management.
 
 The npm package is named `git-relay`, with a matching CLI. The `worktree-relay` and `worktree-sync` CLI aliases and pi's `/worktree` command remain available for existing configurations. The Git detection core is independent of pi and can also be used by Claude Code, Codex, Cursor, OpenCode v2, and other hosts. There are no runtime dependencies; Node.js 22.19+ and Git are required.

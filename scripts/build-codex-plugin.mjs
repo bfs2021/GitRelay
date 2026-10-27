@@ -9,8 +9,8 @@ const manifest = JSON.parse(await readFile(join(root, ".codex-plugin/plugin.json
 if (manifest.name !== pkg.name || manifest.version !== pkg.version) throw new Error("Codex plugin identity/version must match package.json.");
 await rm(target, { recursive: true, force: true });
 await mkdir(target, { recursive: true });
-for (const path of [".codex-plugin", "assets", "dist", "skills", "docs", "src/adapters/codex/plugin-hooks.json", "README.md"]) {
+for (const path of [".codex-plugin", "assets", "dist", "skills", "docs", "src/adapters/codex/plugin-hooks.json", "README.md", "CONTRIBUTING.md", "LICENSE"]) {
   await cp(join(root, path), join(target, path), { recursive: true });
 }
-await writeFile(join(target, "package.json"), JSON.stringify({ name: pkg.name, version: pkg.version, type: "module", private: true }, null, 2) + "\n");
+await writeFile(join(target, "package.json"), JSON.stringify({ name: pkg.name, version: pkg.version, license: pkg.license, type: "module", private: true }, null, 2) + "\n");
 process.stdout.write(`Codex plugin built at ${target}\n`);

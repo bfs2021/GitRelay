@@ -2,6 +2,7 @@
   "name": "git-relay",
   "version": "0.1.0",
   "description": "GitRelay: shared Git worktree change awareness for coding agents",
+  "license": "MIT",
   "type": "module",
   "keywords": [
     "pi-package",
@@ -18,6 +19,8 @@
     "skills",
     "docs",
     "README.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
     ".codex-plugin",
     "assets"
   ],
