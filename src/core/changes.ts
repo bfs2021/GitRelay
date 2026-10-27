@@ -3,6 +3,8 @@ import { git, gitPathLine, GitPathOutputError } from "./git.ts";
 
 const PATCH_LIMIT = 24 * 1024;
 
+export class HistoryUnavailableError extends Error {}
+
 export interface Cursor {
   root: string;
   ref: string;
@@ -224,7 +226,7 @@ export async function inspectChange(cursor: Cursor, current: string, signal?: Ab
     signal?.throwIfAborted();
     const failure = (cause as Error & { cause?: NodeJS.ErrnoException & { signal?: NodeJS.Signals | null; killed?: boolean } }).cause;
     if (typeof failure?.code === "string" || failure?.signal || failure?.killed) throw cause;
-    throw new Error(`Git could not compare upstream history ${JSON.stringify({ ref: cursor.ref, previous: cursor.commit, commit: current })}. A commit may be missing, history may be unrelated, or Git may be unable to read the repository. Restore trusted history or repair Git and retry; unread events are preserved.`, { cause });
+    throw new HistoryUnavailableError(`Git could not compare upstream history ${JSON.stringify({ ref: cursor.ref, previous: cursor.commit, commit: current })}. A commit may be missing, history may be unrelated, or Git may be unable to read the repository. Restore trusted history or repair Git and retry; unread events are preserved.`, { cause });
   }
   const own = await worktreeFiles(root, current, signal);
   if (!own.size) return undefined;

@@ -80,6 +80,8 @@ async function main() {
       output: { type: "string" },
       ref: { type: "string", default: process.env.WORKTREE_MAIN_REF ?? "refs/heads/main" },
       session: { type: "string" },
+      instance: { type: "string" },
+      "acknowledge-history-gap": { type: "boolean" },
       "repository-id": { type: "string" },
       agent: { type: "string", default: "cli" },
       message: { type: "string" },
@@ -102,15 +104,18 @@ async function main() {
   const days = values["retention-days"].trim() ? Number(values["retention-days"]) : NaN;
   if (values.help || !command) {
     longRunningCommand = false;
-    await output("GitRelay (git-relay; worktree-relay and worktree-sync are compatibility aliases)\n\ngit-relay check|watch --session ID [--agent NAME] [--cwd PATH] [--ref refs/heads/main]\ngit-relay send --session ID --agent NAME --message TEXT [--file PATH] [--cwd PATH]\ngit-relay sessions [--cwd PATH]\ngit-relay join|leave --session ID [--agent NAME] [--cwd PATH] [--ref REF]\ngit-relay leave --session ID --cwd MISSING_PATH --repository-id STATE_ID\ngit-relay gc [--cwd PATH] [--apply|--dry-run] [--retention-days 7]\ngit-relay daemon [status] [--interval-ms 5000] [--retention-days 7]\ngit-relay hook claude-code|codex|cursor < hook-input.json\n");
+    await output("GitRelay (git-relay; worktree-relay and worktree-sync are compatibility aliases)\n\ngit-relay check|watch --session ID [--instance INSTANCE_ID] [--agent NAME] [--cwd PATH] [--ref refs/heads/main]\ngit-relay send --session ID --agent NAME --message TEXT [--file PATH] [--cwd PATH]\ngit-relay sessions [--cwd PATH]\ngit-relay join|leave --session ID [--agent NAME] [--cwd PATH] [--ref REF]\ngit-relay leave --session ID --cwd MISSING_PATH --repository-id STATE_ID\ngit-relay gc [--cwd PATH] [--apply|--dry-run] [--retention-days 7]\ngit-relay daemon [status] [--interval-ms 5000] [--retention-days 7]\ngit-relay hook claude-code|codex|cursor < hook-input.json\n");
     await output("git-relay status [--branch NAME] [--github [--repo [HOST/]OWNER/REPO]] [--watch] [--auto-sync|--no-auto-sync] [--interval-ms 30000] [--session ID] [--cwd PATH]\n");
     await output("  [--format json|markdown] [--output FILE (single Markdown snapshot)]\ngit-relay hook codex [--branch-status] < hook-input.json\n");
     await output("git-relay install|uninstall [--platform codex|claude-code|pi|opencode] [--skip PLATFORM] [--dry-run] [--allow-unverified]\n");
     await output("git-relay identity-fresh|identity-migrate|identity-recover --cwd PATH --apply\n");
-    await output("git-relay pi-inspect --session ID --event EVENT_ID [--cwd PATH] [--ref REF]\n");
+    await output("git-relay pi-inspect --session ID [--instance INSTANCE_ID] --event EVENT_ID [--cwd PATH] [--ref REF]\n");
+    await output("git-relay check --session ID [--instance INSTANCE_ID] --acknowledge-history-gap --apply\n");
     return;
   }
   if (values["repository-id"] !== undefined && command !== "leave") throw new Error("--repository-id requires leave.");
+  if (values.instance !== undefined && !values.session) throw new Error("--instance requires --session.");
+  if (values["acknowledge-history-gap"] && (command !== "check" || !values.apply)) throw new Error("--acknowledge-history-gap requires check --apply; it accepts unreadable history without recovering the diff.");
   if (command === "install" || command === "uninstall") {
     installationCommand = true;
     if (positionals.length !== 1) throw new Error("Unexpected positional arguments.");
@@ -124,7 +129,7 @@ async function main() {
   if (values.event && command !== "pi-inspect") throw new Error("--event requires pi-inspect.");
   if (command === "pi-inspect") {
     if (positionals.length !== 1 || !values.session || !values.event || values.apply || values["dry-run"]) throw new Error("pi-inspect requires --session and --event and is read-only.");
-    await output(await inspectPi(values.cwd ?? process.cwd(), values.ref, values.session, values.event, abort.signal));
+    await output(await inspectPi(values.cwd ?? process.cwd(), values.ref, values.session, values.event, abort.signal, values.instance));
     return;
   }
   if (command === "identity-fresh" || command === "identity-migrate" || command === "identity-recover") {
@@ -164,7 +169,7 @@ async function main() {
           let broadcastFailed = false, broadcastFailure: unknown;
           const reportBroadcast = (message: string) => reportDiagnostic(`git-relay: ${message}`);
           if (broadcastAttempted) {
-            try { await sendMessage({ cwd, adapter: values.agent, session: values.session!, ref: values.ref, text: encoded, signal: abort.signal }); }
+            try { await sendMessage({ cwd, adapter: values.agent, session: values.session!, instance: values.instance, ref: values.ref, text: encoded, signal: abort.signal }); }
             catch (error) {
               if (abort.signal.aborted) {
                 reportBroadcast("status broadcast was interrupted and may have completed; inspect before retrying.");
@@ -232,20 +237,21 @@ async function main() {
   }
   if (command !== "daemon" && !values.session) throw new Error("--session ID is required for per-session delivery and deduplication.");
   if (command === "join" || command === "leave") {
-    const options = { cwd: cwd(), ref: values.ref, adapter: values.agent, session: values.session!, signal: abort.signal, repositoryId: values["repository-id"] };
+    const options = { cwd: cwd(), ref: values.ref, adapter: values.agent, session: values.session!, instance: values.instance, signal: abort.signal, repositoryId: values["repository-id"] };
     const session = command === "join" ? await joinSession(options) : await leaveSession(options);
     await output({ session, left: command === "leave" && session !== undefined });
     return;
   }
   if (command === "send") {
     if (!values.message) throw new Error("--message TEXT is required.");
-    const event = await sendMessage({ cwd: cwd(), ref: values.ref, adapter: values.agent, session: values.session!, text: values.message, files: values.file, signal: abort.signal });
+    const event = await sendMessage({ cwd: cwd(), ref: values.ref, adapter: values.agent, session: values.session!, instance: values.instance, text: values.message, files: values.file, signal: abort.signal });
     await output({ eventId: event.id, recipients: event.recipients.length });
     return;
   }
   const check = () => consumeMailbox({
-    cwd: cwd(), ref: values.ref, session: values.session!, adapter: values.agent, signal: abort.signal,
+    cwd: cwd(), ref: values.ref, session: values.session!, instance: values.instance, adapter: values.agent, signal: abort.signal,
     deliverIndividually: true,
+    acknowledgeUnavailableHistory: values["acknowledge-history-gap"],
     async deliver(notifications) {
       for (const notification of notifications) {
         const data = notification.kind === "upstream" ? notification.change : notification.event;

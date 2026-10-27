@@ -10,6 +10,7 @@ import { consumeMailbox, type DeliveryLocation } from "../../core/consumer.ts";
 import { readCursor, watchRoot, type Cursor } from "../../core/changes.ts";
 import { formatNotifications, type Notification, type SharedEvent } from "../../core/mailbox.ts";
 import { hash, readJson } from "../../core/store.ts";
+import { piIdentity } from "./identity.ts";
 
 export const WATCH_STATE = "worktree-watch-state"; // Legacy checkpoints remain readable.
 export const WATCH_MESSAGE = "worktree-upstream-change";
@@ -99,6 +100,8 @@ export function createWatcher(pi: ExtensionAPI, ctx: ExtensionContext, ref: stri
       initialized = true;
     }
     const sessionId = ctx.sessionManager.getSessionId();
+    const identity = piIdentity(ctx.sessionManager);
+    const createdAt = ctx.sessionManager.getHeader?.()?.timestamp;
     const file = ctx.sessionManager.getSessionFile();
     let diskEntries: Map<string, DiskEntry> | undefined;
     let diskSignature: string | undefined;
@@ -194,7 +197,7 @@ export function createWatcher(pi: ExtensionAPI, ctx: ExtensionContext, ref: stri
     let session: string;
     let proofEvents: Set<string> | undefined;
     function refresh(): void {
-      if (ctx.sessionManager.getSessionId() !== sessionId || ctx.sessionManager.getSessionFile() !== file) throw new Error("Pi session changed during worktree monitoring");
+      if (ctx.sessionManager.getSessionId() !== sessionId || ctx.sessionManager.getSessionFile() !== file || ctx.sessionManager.getHeader?.()?.timestamp !== createdAt) throw new Error("Pi session changed during worktree monitoring");
       const currentLeaf = ctx.sessionManager.getLeafId();
       if (currentLeaf !== null && (typeof currentLeaf !== "string" || !currentLeaf)) throw new Error("Pi session has an invalid leaf ID");
       // Pi's history is append-only; refresh immediately when its branch/session changes.
@@ -301,7 +304,7 @@ export function createWatcher(pi: ExtensionAPI, ctx: ExtensionContext, ref: stri
       throw new Error(`Pi delivery outcome is unknown for event ${id}; preserve and inspect the session file ${file ?? "(unavailable)"}, proofs in ${join(location.repository.directory, "receipts", location.sessionKey)}, and unread event in ${join(location.repository.directory, "events")} for manual recovery.`);
     }
     await consumeMailbox({
-      cwd: ctx.cwd, ref, adapter: "pi", session: sessionId,
+      cwd: ctx.cwd, ref, ...identity,
       signal: abort.signal, initialCursor, isDelivered, beforeReceipt, isPending,
       async deliver(notifications, location) {
         refresh();

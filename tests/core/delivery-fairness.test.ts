@@ -6,7 +6,7 @@ import { sendMessage, type Notification } from "../../src/core/mailbox.ts";
 import { readJson, repository, writeJson } from "../../src/core/store.ts";
 import { fixture } from "../helpers.ts";
 
-test("rejected messages do not indefinitely starve later messages", { todo: "Delivery fairness across repeated false results is not implemented" }, async (t) => {
+test("rejected messages do not indefinitely starve later messages", async (t) => {
   const f = await fixture(t), attempted: string[] = [], ids: string[] = [];
   const receiver = {
     cwd: f.b, ref: "refs/heads/main", adapter: "test", session: "fair", deliverIndividually: true,
@@ -24,7 +24,7 @@ test("rejected messages do not indefinitely starve later messages", { todo: "Del
   assert.ok(attempted.includes(ids[8]), "a later acceptable message was never attempted");
 });
 
-test("a rejected oversized notification does not indefinitely starve a small message", { todo: "Oversized rejected notifications monopolize the delivery budget" }, async (t) => {
+test("a rejected oversized notification does not indefinitely starve a small message", async (t) => {
   const f = await fixture(t), attempted: string[] = [], ids: string[] = [];
   const receiver = {
     cwd: f.b, ref: "refs/heads/main", adapter: "test", session: "large", deliverIndividually: true,

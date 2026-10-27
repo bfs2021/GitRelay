@@ -1,3 +1,4 @@
+import { piIdentity } from "../../src/adapters/pi/identity.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
@@ -30,7 +31,7 @@ test("pi confirms an upstream event after recipients are appended, while rejecti
   } as unknown as ExtensionContext, ref);
   t.after(() => watcher.stop());
   await watcher.tick();
-  const repo = await repository(f.b), identity = { adapter: "pi", session: manager.getSessionId() };
+  const repo = await repository(f.b), identity = piIdentity(manager);
   const key = sessionKey(repo, identity, ref);
   const old = await joinSession({ cwd: f.c, ref, adapter: "test", session: "old-recipient" });
   const commit = await f.commit(f.main, "shared.txt", "upstream\n");
@@ -72,7 +73,7 @@ test("pi refuses an upstream snapshot that did not address the current session",
   } as unknown as ExtensionContext, ref);
   t.after(() => watcher.stop());
   await watcher.tick();
-  const repo = await repository(f.b), identity = { adapter: "pi", session: manager.getSessionId() };
+  const repo = await repository(f.b), identity = piIdentity(manager);
   const key = sessionKey(repo, identity, ref);
   const other = await joinSession({ cwd: f.c, ref, adapter: "test", session: "other-recipient" });
   const commit = await f.commit(f.main, "shared.txt", "upstream\n");
@@ -105,14 +106,14 @@ test("generic pi consumers cannot acknowledge a queued native event with an unre
   const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "unconfirmed pi event" });
   await watcher.tick();
   await watcher.tick();
-  const repo = await repository(f.b), receiver = { cwd: f.b, ref: "refs/heads/main", adapter: "pi", session: manager.getSessionId() };
+  const repo = await repository(f.b), receiver = { cwd: f.b, ref: "refs/heads/main", ...piIdentity(manager) };
   const key = sessionKey(repo, receiver, receiver.ref), dir = join(repo.directory, "receipts", key);
   const proof = (await readdir(dir)).find((name) => name.startsWith(`${event.id}.`) && name.endsWith(".pi-proof"));
   assert.ok(proof);
   assert.equal(queued.length, 1);
   assert.ok(warnings.some((warning) => warning.includes("outcome is unknown")));
   const cli = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
-  await assert.rejects(promisify(execFile)(process.execPath, ["--experimental-strip-types", cli, "check", "--cwd", f.b, "--agent", "pi", "--session", receiver.session], { env: process.env, timeout: 5000 }), (error: unknown) => {
+  await assert.rejects(promisify(execFile)(process.execPath, ["--experimental-strip-types", cli, "check", "--cwd", f.b, "--agent", "pi", "--session", receiver.session, "--instance", receiver.instance!], { env: process.env, timeout: 5000 }), (error: unknown) => {
     const result = error as { stdout?: string; stderr?: string };
     return !result.stdout && /Pi delivery outcome is unknown/.test(result.stderr ?? "");
   });
@@ -145,7 +146,7 @@ test("pi refreshes native acknowledgements when the branch advances during a sca
   const repo = await repository(f.b);
   const [first, second] = await eventsIn(repo);
   if (first.kind !== "message" || second.kind !== "message") throw new Error("Expected messages");
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   for (const event of [first, second]) {
     const notifications: Notification[] = [{ kind: "message", event }];
     const message = { customType: WATCH_MESSAGE, content: formatNotifications(notifications), display: true, details: { eventIds: [event.id], notifications } };
@@ -210,7 +211,7 @@ test("pi ignores malformed inactive history lines without skipping active entrie
   await watcher.tick();
   await watcher.tick();
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   assert.deepEqual(queued, [event.id]);
   assert.equal((await readJson(join(repo.directory, "receipts", key, `${event.id}.json`)) as { status: string }).status, "delivered");
   assert.deepEqual(warnings, []);
@@ -242,7 +243,7 @@ test("pi ignores inactive entries without IDs but rejects an invalid final entry
   await watcher.tick();
   assert.deepEqual(queued, [first.id]);
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   assert.equal((await readJson(join(repo.directory, "receipts", key, `${first.id}.json`)) as { status: string }).status, "delivered");
   await appendFile(file, `${invalid}\n`);
   const second = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "after invalid tail" });
@@ -362,7 +363,7 @@ test("pi preserves unread events when an observed session file disappears", asyn
   const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "missing session file" });
   await watcher.tick();
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const receipt = join(repo.directory, "receipts", key, `${event.id}.json`);
   assert.deepEqual(queued, []);
   assert.equal(await readJson(receipt), undefined);
@@ -384,7 +385,7 @@ for (const activeConversation of [true, false]) test(`pi stops when a persisted 
   assert.equal(manager.getBranch().some((entry) => entry.type === "message"), activeConversation);
   const file = manager.getSessionFile()!;
   const original = await readFile(file, "utf8");
-  const options = { cwd: f.b, ref: "refs/heads/main", adapter: "pi", session: manager.getSessionId() };
+  const options = { cwd: f.b, ref: "refs/heads/main", ...piIdentity(manager) };
   await joinSession(options);
   await unlink(file);
   const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "missing before watcher starts" });
@@ -499,7 +500,7 @@ test("pi rejects corrupted UTF-8 in native history before confirming delivery", 
   await watcher.tick();
   await watcher.stop();
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const receipt = join(repo.directory, "receipts", key, `${event.id}.json`);
   assert.equal(await readJson(receipt), undefined);
   assert.equal(resent, 0);
@@ -553,7 +554,7 @@ test("pi reads valid UTF-8 split across native history stream chunks", async (t)
   reopened.appendCustomMessageEntry(WATCH_MESSAGE, queued.content, true, queued.details);
   await watcher.tick();
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: reopened.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(reopened), "refs/heads/main");
   assert.equal((await readJson(join(repo.directory, "receipts", key, `${event.id}.json`)) as { status: string }).status, "delivered");
   assert.deepEqual(warnings, []);
 });
@@ -577,7 +578,7 @@ test("pi validates saved delivery contents against the pending event before conf
   const file = manager.getSessionFile()!;
   const intact = await readFile(file, "utf8");
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const receipt = join(repo.directory, "receipts", key, `${event.id}.json`);
   for (const variant of ["content", "content-and-event", "ids-only", "recipients"] as const) {
     const lines = intact.trimEnd().split("\n");
@@ -643,7 +644,7 @@ test("pi verifies multi-event records while retaining existing receipts", async 
   manager.appendCustomMessageEntry(WATCH_MESSAGE, queued.content, true, queued.details);
   await watcher.tick();
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const receipts = queued.details.eventIds.map((id: string) => join(repo.directory, "receipts", key, `${id}.json`));
   const firstReceipt = await readFile(receipts[0]);
   await unlink(receipts[1]);
@@ -677,7 +678,7 @@ test("pi proves a message before sending and preserves an unknown host failure",
   await watcher.tick();
   assert.equal(calls, 1);
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const dir = join(repo.directory, "receipts", key);
   const digest = hash(queued);
   const proof = join(dir, `${event.id}.${digest}.pi-proof`);
@@ -708,7 +709,7 @@ test("pi preserves an uncertain scoped delivery across relevance changes and res
   const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "scoped", files: ["shared.txt"] });
   await watcher.tick();
   assert.deepEqual(queued.details.eventIds, [event.id]);
-  const repo = await repository(f.b), key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const repo = await repository(f.b), key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const directory = join(repo.directory, "receipts", key), receipt = join(directory, `${event.id}.json`);
   await writeFile(join(f.b, "shared.txt"), "base\n");
   busy = true;
@@ -752,7 +753,7 @@ test("pi does not confirm a record after the active branch changes during proof 
   await watcher.tick();
   const recorded = manager.appendCustomMessageEntry(WATCH_MESSAGE, queued.content, true, queued.details);
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const receipt = join(repo.directory, "receipts", key, `${event.id}.json`);
   const probe = await open(manager.getSessionFile()!, "r");
   const prototype = Object.getPrototypeOf(probe);
@@ -791,7 +792,7 @@ test("pi rechecks the active branch immediately before publishing a receipt", as
   const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "branch before receipt" });
   await watcher.tick();
   const recorded = manager.appendCustomMessageEntry(WATCH_MESSAGE, queued.content, true, queued.details);
-  const repo = await repository(f.b), key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const repo = await repository(f.b), key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const dir = join(repo.directory, "receipts", key), receipt = join(dir, `${event.id}.json`);
   const originalOpen = fs.promises.open;
   let switched = false;
@@ -831,7 +832,7 @@ test("pi cancellation during receipt preparation preserves the event and proof",
   const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "cancel before receipt" });
   await watcher.tick();
   manager.appendCustomMessageEntry(WATCH_MESSAGE, queued.content, true, queued.details);
-  const repo = await repository(f.b), key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const repo = await repository(f.b), key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const dir = join(repo.directory, "receipts", key), receipt = join(dir, `${event.id}.json`);
   const originalOpen = fs.promises.open;
   let stopped: Promise<void> | undefined;
@@ -882,7 +883,7 @@ test("pi does not send after cancellation while publishing a proof", async (t) =
   await stopped;
   assert.equal(sent, 0);
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const dir = join(repo.directory, "receipts", key);
   assert.equal(await readJson(join(dir, `${event.id}.json`)), undefined);
   assert.ok(!(await readdir(dir)).some((name) => name.startsWith(`${event.id}.`) && name.endsWith(".pi-proof")));
@@ -913,7 +914,7 @@ test("pi removes its own pre-send proof when proof validation fails", async (t) 
   }) as typeof fs.promises.open;
   syncBuiltinESMExports();
   try { await watcher.tick(); } finally { fs.promises.open = originalOpen; syncBuiltinESMExports(); }
-  const repo = await repository(f.b), key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const repo = await repository(f.b), key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const directory = join(repo.directory, "receipts", key);
   assert.equal(injected, true);
   assert.equal(sends, 0);
@@ -946,7 +947,7 @@ test("pi preserves proof temporaries and permits retry when temporary cleanup fa
   }) as typeof fs.promises.rm;
   syncBuiltinESMExports();
   try { await watcher.tick(); } finally { fs.promises.rm = originalRm; syncBuiltinESMExports(); }
-  const repo = await repository(f.b), key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const repo = await repository(f.b), key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const directory = join(repo.directory, "receipts", key), names = await readdir(directory);
   assert.equal(injected, true);
   assert.equal(sends, 0);
@@ -986,7 +987,7 @@ test("pi preserves an existing temporary proof after an exclusive-create collisi
   assert.ok(occupied);
   assert.equal(await readFile(occupied, "utf8"), "unrelated existing data");
   assert.equal(sends, 0);
-  const repo = await repository(f.b), key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const repo = await repository(f.b), key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   assert.equal(await readJson(join(repo.directory, "receipts", key, `${event.id}.json`)), undefined);
   await watcher.tick(); await watcher.tick();
   assert.equal(sends, 1);
@@ -1005,7 +1006,7 @@ test("pi preserves a newly created proof whose contents change before cancellati
   const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "proof externally modified" });
   const notifications: Notification[] = [{ kind: "message", event }];
   const message = { customType: WATCH_MESSAGE, content: formatNotifications(notifications), display: true, details: { eventIds: [event.id], notifications } };
-  const repo = await repository(f.b), key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const repo = await repository(f.b), key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const proof = join(repo.directory, "receipts", key, `${event.id}.${hash(message)}.pi-proof`);
   const probe = await open(manager.getSessionFile()!, "r"), prototype = Object.getPrototypeOf(probe), originalRead = prototype.read;
   await probe.close();
@@ -1072,7 +1073,7 @@ test("pi preserves a conflicting proof and does not send", async (t) => {
   const notifications: Notification[] = [{ kind: "message", event }];
   const message = { customType: WATCH_MESSAGE, content: formatNotifications(notifications), display: true, details: { eventIds: [event.id], notifications } };
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const path = join(repo.directory, "receipts", key, `${event.id}.${hash(message)}.pi-proof`);
   await writeFile(path, "existing data");
   await watcher.tick();
@@ -1097,7 +1098,7 @@ test("pi preserves existing proofs, avoids repeated sends, and confirms an exist
   const first = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "same proof" });
   await watcher.tick(); await watcher.tick();
   assert.equal(attempts, 1);
-  const repo = await repository(f.b), key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const repo = await repository(f.b), key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const directory = join(repo.directory, "receipts", key);
   assert.equal((await readdir(directory)).filter((name) => name.startsWith(`${first.id}.`) && name.endsWith(".pi-proof")).length, 1);
   for (let i = 0; i < 15; i++) await writeFile(join(directory, `${first.id}.${i.toString(16).padStart(64, "0")}.pi-proof`), "preserve");
@@ -1132,7 +1133,7 @@ test("pi delivery proofs are isolated by receiving session", async (t) => {
   managers[1].appendCustomMessageEntry(WATCH_MESSAGE, queued.content, true, queued.details);
   await second.tick();
   const repo = await repository(f.b);
-  const secondKey = sessionKey(repo, { adapter: "pi", session: managers[1].getSessionId() }, "refs/heads/main");
+  const secondKey = sessionKey(repo, piIdentity(managers[1]), "refs/heads/main");
   assert.equal(await readJson(join(repo.directory, "receipts", secondKey, `${event.id}.json`)), undefined);
   assert.ok(warnings.some((message) => message.includes("Pi delivery proof is missing or invalid")));
 });
@@ -1164,7 +1165,7 @@ test("pi rejects a jointly altered upstream patch and formatted message", async 
   await watcher.tick();
   await watcher.stop();
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   assert.equal(await readJson(join(repo.directory, "receipts", key, `${id}.json`)), undefined);
   assert.ok(warnings.some((message) => message.includes("Pi delivery proof is missing or invalid")));
 });
@@ -1181,7 +1182,7 @@ test("GC removes confirmed pi proofs and preserves unrelated files", async (t) =
   const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "gc proof" });
   await watcher.tick(); await watcher.tick();
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const dir = join(repo.directory, "receipts", key);
   const proofs = (await readdir(dir)).filter((name) => name.startsWith(`${event.id}.`) && name.endsWith(".pi-proof"));
   assert.equal(proofs.length, 1);
@@ -1215,7 +1216,7 @@ test("pi keeps busy events unread until the host is idle", async (t) => {
   const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "while busy" });
   await watcher.tick();
   await watcher.tick();
-  const repo = await repository(f.b), key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const repo = await repository(f.b), key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const receipt = join(repo.directory, "receipts", key, `${event.id}.json`);
   assert.deepEqual(queued, []);
   assert.equal(await readJson(receipt), undefined);
@@ -1248,7 +1249,7 @@ test("pi does not resend an unobservable idle deferred action across watcher rep
   await watcher.tick();
   assert.equal(queued.length, 1);
   assert.ok(warnings.some((message) => message.includes("Pi delivery outcome is unknown")));
-  const repo = await repository(f.b), key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const repo = await repository(f.b), key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const receipt = join(repo.directory, "receipts", key, `${event.id}.json`);
   assert.equal(await readJson(receipt), undefined);
   manager.appendCustomMessageEntry(WATCH_MESSAGE, queued[0].content, true, queued[0].details);
@@ -1290,7 +1291,7 @@ test("pi does not acknowledge an in-memory entry when native persistence fails",
   assert.equal(new Set(queued).size, queued.length);
   assert.ok(warnings.some((message) => message.includes("session history is not fully persisted")));
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   for (const event of events) assert.equal(await readJson(join(repo.directory, "receipts", key, `${event.id}.json`)), undefined);
   assert.ok(!(await readFile(file, "utf8")).includes("lost-write-"));
   await watcher.stop();
@@ -1338,7 +1339,7 @@ test("pi waits for a first session flush, validates its parent chain and retries
   await watcher.tick();
   assert.deepEqual(queued, [event.id]);
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const receipt = join(repo.directory, "receipts", key, `${event.id}.json`);
   assert.equal(await readJson(receipt), undefined);
   manager.appendMessage({ role: "user", content: [{ type: "text", text: "flush" }], timestamp: Date.now() });
@@ -1392,7 +1393,7 @@ test("pi volatile sessions can receive more than one batch without false receipt
   assert.deepEqual(new Set(queued), new Set(events.map((event) => event.id)));
   assert.equal(queued.length, events.length);
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   for (const event of events) assert.equal(await readJson(join(repo.directory, "receipts", key, `${event.id}.json`)), undefined);
 });
 
@@ -1423,7 +1424,7 @@ test("pi detects an orphaned native parent after a failed write and restart", { 
   await watcher.tick();
   assert.ok(warnings.some((message) => message.includes("not fully persisted")));
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   for (const event of [first, second]) assert.equal(await readJson(join(repo.directory, "receipts", key, `${event.id}.json`)), undefined);
   await watcher.stop();
   const resumed = SessionManager.open(file);
@@ -1499,7 +1500,7 @@ test("pi rechecks native session identity immediately before confirming delivery
   };
   await watcher.tick();
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   const receipt = join(repo.directory, "receipts", key, `${event.id}.json`);
   assert.equal(await readJson(receipt), undefined);
   assert.ok(warnings.some((message) => message.includes("changed before delivery confirmation")));

@@ -4,6 +4,8 @@ import { consumeMailbox } from "../../core/consumer.ts";
 import { watchRoot } from "../../core/changes.ts";
 import { formatNotifications } from "../../core/mailbox.ts";
 import { hash } from "../../core/store.ts";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 
 type SessionID = Parameters<Plugin.Context["session"]["get"]>[0]["sessionID"];
 
@@ -20,7 +22,7 @@ export default {
     };
     try { root = await watchRoot(ctx.location.directory); }
     catch (error) { warnRoot(error); }
-    const sessions = new Map<SessionID, { abort: AbortController; active?: Promise<void> }>();
+    const sessions = new Map<SessionID, { abort: AbortController; instance?: string; active?: Promise<void> }>();
     const draining = new Set<Promise<void>>();
     const lookups = new Map<SessionID, Set<{ cancelled: boolean; abort: AbortController }>>();
     const abort = new AbortController();
@@ -54,6 +56,8 @@ export default {
     const deferred = new Error("Establish baseline without recursively prompting");
     const warn = (error: unknown) => { try { console.warn(`[GitRelay] ${error instanceof Error ? error.message : String(error)}`); } catch {} };
     const belongs = (session: Awaited<ReturnType<typeof ctx.session.get>>) => !session.parentID && session.location.directory === ctx.location.directory;
+    const instanceOf = (session: Awaited<ReturnType<typeof ctx.session.get>>) => session.time?.created === undefined ? undefined
+      : hash([resolve(process.env.XDG_DATA_HOME || homedir()), session.time.created]);
 
     function getSession(id: SessionID, signal: AbortSignal, underlying?: (pending: ReturnType<typeof ctx.session.get>) => void): ReturnType<typeof ctx.session.get> {
       signal.throwIfAborted();
@@ -74,15 +78,26 @@ export default {
         const currentRoot = await probeRoot();
         state.abort.signal.throwIfAborted();
         if (!currentRoot) return;
-        if (!belongs(await getSession(id, state.abort.signal))) return;
+        const native = await getSession(id, state.abort.signal);
+        if (!belongs(native)) return;
+        if (instanceOf(native) !== state.instance) {
+          state.abort.abort();
+          sessions.delete(id);
+          await enroll(id);
+          return;
+        }
         await consumeMailbox({
-          cwd: ctx.location.directory, ref, adapter: "opencode", session: id, signal: state.abort.signal, deliverIndividually: true,
-          async deliver(notifications) {
+          cwd: ctx.location.directory, ref, adapter: "opencode", session: id, instance: state.instance, signal: state.abort.signal, deliverIndividually: true,
+          async deliver(notifications, location) {
             if (initial) throw deferred;
             // V2 durably admits queued input; the host handles busy sessions and idle wake-up.
             for (const notification of notifications) {
               state.abort.signal.throwIfAborted();
-              await ctx.session.prompt({ sessionID: id, id: `msg_${hash(["git-relay", currentRoot, id, notification.event.id])}`, text: formatNotifications([notification]), delivery: "queue", metadata: { source: "git-relay" } }, { signal: state.abort.signal });
+              const target = await getSession(id, state.abort.signal);
+              if (!belongs(target) || instanceOf(target) !== state.instance) throw new Error("OpenCode session changed before delivery; unread event preserved");
+              await ctx.session.prompt({ sessionID: id, id: `msg_${hash(["git-relay", location!.repository.id, location!.sessionKey, notification.event.id])}`, text: formatNotifications([notification]), delivery: "queue", metadata: { source: "git-relay" } }, { signal: state.abort.signal });
+              const accepted = await getSession(id, state.abort.signal);
+              if (!belongs(accepted) || instanceOf(accepted) !== state.instance) throw new Error("OpenCode session changed during delivery; outcome unknown and event preserved");
             }
           },
         });
@@ -133,7 +148,7 @@ export default {
           if (inScope || (retries.get(id) ?? 0) <= sequence) retries.delete(id);
           if (!inScope) return;
           if (!sessions.has(id)) {
-            sessions.set(id, { abort: new AbortController() });
+            sessions.set(id, { abort: new AbortController(), instance: instanceOf(session) });
             await scan(id, true);
           }
         }

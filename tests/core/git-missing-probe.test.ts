@@ -69,7 +69,7 @@ for (const extension of ["pack", "idx"] as const) {
   });
 }
 
-test("pruned history blocks acknowledgement until trusted objects are restored", async (t) => {
+test("pruned history remains unread while independent messages can advance", async (t) => {
   const f = await fixture(t), got: any[] = [];
   const receiver = { cwd: f.b, ref, adapter: "test", session: "B", async deliver(batch: any[]) { got.push(...batch); } };
   await writeFile(join(f.b, "shared.txt"), "local\n"); await consumeMailbox(receiver);
@@ -84,8 +84,8 @@ test("pruned history blocks acknowledgement until trusted objects are restored",
   const repo = await repository(f.b), key = sessionKey(repo, receiver, ref);
   await assert.rejects(consumeMailbox(receiver), (error: unknown) => (error as Error).message.includes("could not compare") && (error as Error).message.includes(lost));
   const unread = (await eventsIn(repo)).filter((event) => event.recipients.includes(key));
-  for (const event of unread) assert.equal(await readReceipt(repo, key, event.id), undefined);
-  assert.equal(got.length, 0);
+  for (const event of unread) assert.equal((await readReceipt(repo, key, event.id))?.status, event.kind === "message" ? "delivered" : undefined);
+  assert.deepEqual(got.map((item) => item.event.id), [message.id]);
   await cp(backup, objects, { recursive: true, force: false, errorOnExist: false });
   await consumeMailbox(receiver);
   assert.ok(got.some((item) => item.event.id === message.id));

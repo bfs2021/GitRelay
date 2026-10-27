@@ -203,7 +203,7 @@ test("send-only identities do not subscribe or prevent consumers from collecting
   assert.deepEqual(new Set((await collectGarbage(f.b, { apply: true, retentionDays: 0 })).removed), new Set([first.id, second.id, third.id]));
 });
 
-test("pruned Git objects become an acknowledged history-gap notification, not an inbox barrier", { todo: "A safe, explicit history-gap acknowledgement flow is not implemented" }, async (t) => {
+test("pruned Git objects become an acknowledged history-gap notification, not an inbox barrier", async (t) => {
   const f = await fixture(t);
   await writeFile(join(f.b, "shared.txt"), "local\n");
   const b = { cwd: f.b, ref, adapter: "test", session: "B", async deliver() {} };
@@ -218,12 +218,12 @@ test("pruned Git objects become an acknowledged history-gap notification, not an
   const message = await sendMessage({ cwd: f.a, adapter: "cli", session: "sender", text: "must get past old history" });
   const repo = await repository(f.b);
   const key = sessionKey(repo, b, ref);
-  const queued = await consumeMailbox({ ...b, async deliver() { return false; } });
+  const queued = await consumeMailbox({ ...b, acknowledgeUnavailableHistory: true, async deliver() { return false; } });
   const gaps = queued.filter((item) => item.kind === "upstream" && item.change.unavailable);
   assert.equal(gaps.length, 2, "both a missing range end and a missing range start are diagnosed");
   assert.match(formatNotifications(gaps), /history unavailable/);
   for (const item of queued) assert.equal(await readReceipt(repo, key, item.event.id), undefined);
-  const accepted = await consumeMailbox(b);
+  const accepted = await consumeMailbox({ ...b, acknowledgeUnavailableHistory: true });
   assert.ok(accepted.some((item) => item.event.id === message.id));
   for (const item of accepted) assert.equal((await readReceipt(repo, key, item.event.id))?.status, "delivered");
   assert.deepEqual(await consumeMailbox(b), []);

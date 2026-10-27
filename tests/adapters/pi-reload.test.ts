@@ -1,3 +1,4 @@
+import { piIdentity } from "../../src/adapters/pi/identity.ts";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -73,7 +74,7 @@ function nativeEventIds(manager: SessionManager): string[] {
 
 async function assertReceipts(cwd: string, manager: SessionManager, ids: string[]) {
   const repo = await repository(cwd);
-  const key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   for (const id of ids) {
     assert.equal((await readJson(join(repo.directory, "receipts", key, `${id}.json`)) as { status: string }).status, "delivered");
   }
@@ -250,7 +251,7 @@ test("pi keeps delivery pending when the runtime switches away and resumes durin
   assert.ok(!JSON.stringify(streams[1]).includes(event.id));
   assert.deepEqual(nativeEventIds(SessionManager.open(originalFile)), []);
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: resumed.getSessionId() }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(resumed), "refs/heads/main");
   assert.equal(await readJson(join(repo.directory, "receipts", key, `${event.id}.json`)), undefined);
   assert.deepEqual(errors, []);
 });

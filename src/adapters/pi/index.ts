@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { addWorktree, listWorktrees, type Worktree } from "../../core/git.ts";
 import { createWatcher, type Delivery } from "./watch.ts";
 import { joinSession, leaveSession } from "../../core/sessions.ts";
+import { piIdentity } from "./identity.ts";
 
 function label(tree: Worktree): string {
   const flags = [tree.bare && "bare", tree.detached && "detached", tree.locked !== undefined && "locked", tree.prunable !== undefined && "prunable"].filter(Boolean);
@@ -65,7 +66,8 @@ export default function (pi: ExtensionAPI) {
     if (failed?.status === "rejected") throw failed.reason;
   }
   async function startWatcher(ctx: ExtensionContext, ref: string) {
-    lease = sessionDelivery(ctx.sessionManager, ctx.sessionManager.getSessionId(), ctx.cwd, ref);
+    const identity = piIdentity(ctx.sessionManager);
+    lease = sessionDelivery(ctx.sessionManager, JSON.stringify([identity.session, identity.instance]), ctx.cwd, ref);
     watcher = createWatcher(pi, ctx, ref, lease.delivery);
     await watcher.start();
   }
@@ -114,7 +116,7 @@ export default function (pi: ExtensionAPI) {
             await stopWatcher();
             if (!current()) return;
             const ref = String(pi.getFlag("worktree-main-ref") ?? "refs/heads/main");
-            const options = { cwd, ref, adapter: "pi", session };
+            const options = { cwd, ref, ...piIdentity(manager) };
             if (!current()) return;
             try {
               started = true;

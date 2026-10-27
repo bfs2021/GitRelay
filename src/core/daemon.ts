@@ -52,7 +52,6 @@ export async function runDaemon(options: DaemonOptions): Promise<void> {
           cleanup.set(id, progress);
           const now = performance.now();
           const clean = now - progress.completed >= 60 * 60 * 1000 && now - progress.attempted >= Math.max(intervalMs, 5000);
-          if (clean) progress.attempted = now;
           try {
             const directory = join(root, "repos", id);
             await checkStateDirectory(directory);
@@ -77,6 +76,7 @@ export async function runDaemon(options: DaemonOptions): Promise<void> {
                 await emit({ type: "daemon.repository-missing", repo: id, message: "Repository unavailable; retaining unread state. Monitoring resumes if it returns." });
               }
               if (clean && !options.signal.aborted) {
+                progress.attempted = now;
                 const report = await collectRepository({ id, common: metadata.common, root: metadata.common, directory, identity: metadata.identity, identitySource }, { apply: true, retentionDays: days, signal: options.signal });
                 if (!report.kept.some((event) => event.reason === "busy")) progress.completed = performance.now();
                 await emit({ type: "daemon.cleanup", repo: id, removed: report.removed.length, kept: report.kept.length });
@@ -86,6 +86,7 @@ export async function runDaemon(options: DaemonOptions): Promise<void> {
             const current = await repositoryIdentity(common, false);
             if (hash([common, metadata.identity]) !== id || current?.identity !== metadata.identity || current.identitySource !== identitySource) throw new Error(`Repository identity mismatch: ${id}; previous state was preserved.`);
             const repo: Repository = { id, common, root: common, directory, identity: metadata.identity, identitySource };
+            if (clean) progress.attempted = now;
             await mkdir(join(directory, "trash"), { recursive: true, mode: 0o700 });
             const errors: object[] = [];
             await withLock(join(directory, "publish.lock"), async () => {

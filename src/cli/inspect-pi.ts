@@ -43,7 +43,7 @@ async function snapshot(path: string): Promise<{ value: unknown; sha256: string 
 }
 
 /** Read-only evidence; observed matching proofs do not establish a complete batch. */
-export async function inspectPi(cwd: string, ref: string, session: string, eventId: string, signal?: AbortSignal): Promise<object> {
+export async function inspectPi(cwd: string, ref: string, session: string, eventId: string, signal?: AbortSignal, instance?: string): Promise<object> {
   if (!isId(eventId)) throw new Error("--event must be a 64-character event ID.");
   const root = await watchRoot(cwd, signal);
   const common = await realpath(gitPathLine(await git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"], signal, "paths")));
@@ -51,7 +51,7 @@ export async function inspectPi(cwd: string, ref: string, session: string, event
   if (!identity) throw new Error(`No existing GitRelay repository identity: ${common}`);
   const id = hash([common, identity.identity]);
   const repo: Repository = { root, common, id, directory: join(stateDirectory(), "repos", id), ...identity };
-  const key = sessionKey(repo, { adapter: "pi", session }, ref);
+  const key = sessionKey(repo, { adapter: "pi", session, instance }, ref);
   const directory = join(repo.directory, "receipts", key);
   const collect = async () => {
     signal?.throwIfAborted();

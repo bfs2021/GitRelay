@@ -7,6 +7,7 @@ import { checkStateDirectory, hash, isCommit, isId, readJson, repository, reposi
 export interface Identity {
   adapter: string;
   session: string;
+  instance?: string;
 }
 
 export interface Session extends Identity {
@@ -43,11 +44,14 @@ export type Notification = { kind: "upstream"; event: UpstreamEvent; change: Cha
 export function validateIdentity(identity: Identity): void {
   if (typeof identity.adapter !== "string" || !identity.adapter || identity.adapter.length > 64) throw new Error("An adapter name (max 64 characters) is required.");
   if (typeof identity.session !== "string" || !identity.session || identity.session.length > 512) throw new Error("A non-empty session ID (max 512 characters) is required.");
+  if (identity.instance !== undefined && !isId(identity.instance)) throw new Error("A session instance must be a 64-character ID.");
 }
 
 export function sessionKey(repo: Pick<Repository, "root">, identity: Identity, ref: string): string {
   validateIdentity(identity);
-  return hash([repo.root, ref, identity.adapter, identity.session]);
+  const parts = [repo.root, ref, identity.adapter, identity.session];
+  if (identity.instance !== undefined) parts.push(identity.instance);
+  return hash(parts);
 }
 
 export async function listSessions(cwd: string): Promise<Session[]> {
@@ -87,7 +91,7 @@ export async function sessionsIn(repo: Repository): Promise<Session[]> {
 export async function registerSession(repo: Repository, identity: Identity, ref: string, baseline?: string): Promise<Session> {
   const adapter = identity.adapter;
   validateIdentity({ adapter, session: "snapshot" });
-  identity = { adapter, session: identity.session };
+  identity = { adapter, session: identity.session, instance: identity.instance };
   validateIdentity(identity);
   repo = { root: repo.root, directory: repo.directory } as Repository;
   const key = sessionKey(repo, identity, ref);
@@ -95,7 +99,7 @@ export async function registerSession(repo: Repository, identity: Identity, ref:
   const previous = await readSession(repo, key);
   if (previous && (previous.key !== key || previous.root !== repo.root || previous.adapter !== identity.adapter || previous.session !== identity.session || previous.ref !== ref || (previous.baseline !== undefined && !isCommit(previous.baseline)))) throw new Error(`Invalid session: ${path}`);
   const now = new Date().toISOString();
-  const session = { adapter: identity.adapter, session: identity.session, key, root: repo.root, ref, createdAt: previous?.createdAt ?? now, lastSeen: now, baseline: previous?.baseline ?? baseline, migrated: previous?.migrated, closedAt: previous?.closedAt };
+  const session = { ...identity, key, root: repo.root, ref, createdAt: previous?.createdAt ?? now, lastSeen: now, baseline: previous?.baseline ?? baseline, migrated: previous?.migrated, closedAt: previous?.closedAt };
   await writeJson(path, session);
   return session;
 }
@@ -160,7 +164,8 @@ export function validateReceipt(value: unknown, eventId: string, path: string): 
 export async function publishUpstream(repo: Repository, identity: Identity, ref: string, previous: string, commit: string, recipients: string[], salt = ""): Promise<UpstreamEvent> {
   if (!Array.isArray(recipients)) throw new Error("Invalid upstream publication input.");
   const targetRecipients = [...recipients], repository = { ...repo, root: repo.root, directory: repo.directory };
-  const sender = { adapter: identity.adapter, session: identity.session, root: repository.root };
+  const sender: Identity & { root: string } = { adapter: identity.adapter, session: identity.session, instance: identity.instance, root: repository.root };
+  if (sender.instance === undefined) delete sender.instance;
   validateIdentity(sender);
   if (typeof sender.root !== "string" || typeof ref !== "string" || !isCommit(previous) || !isCommit(commit) || !targetRecipients.every(isId) || typeof salt !== "string") throw new Error("Invalid upstream publication input.");
   const id = hash(["upstream", ref, previous, commit, salt]);
@@ -211,8 +216,9 @@ function validateMessage(text: unknown, files: unknown, strict = true): string[]
 }
 
 export async function sendMessage(options: Identity & { cwd: string; ref?: string; text: string; files?: string[]; signal?: AbortSignal }): Promise<AgentMessage> {
-  const { cwd, adapter, session, text, signal } = options;
-  const identity = { adapter, session }, ref = options.ref ?? "refs/heads/main";
+  const { cwd, adapter, session, instance, text, signal } = options;
+  const identity: Identity = { adapter, session, instance }, ref = options.ref ?? "refs/heads/main";
+  if (identity.instance === undefined) delete identity.instance;
   validateIdentity(identity);
   const files = validateMessage(text, options.files ?? []);
   const repo = await repository(cwd, signal);
@@ -229,7 +235,7 @@ export async function sendMessage(options: Identity & { cwd: string; ref?: strin
     const sender = await readSession(repo, sessionKey(repo, identity, ref));
     if (sender?.closedAt) throw new Error("This session has left; use join before sending messages.");
     const recipients = (await sessionsIn(repo)).filter((other) => !other.closedAt && !(other.root === repo.root && other.adapter === adapter && other.session === session)).map((other) => other.key);
-    const event: AgentMessage = { id: hash(randomUUID()), kind: "message", createdAt: new Date().toISOString(), sender: { adapter, session, root: repo.root }, recipients, text, files };
+    const event: AgentMessage = { id: hash(randomUUID()), kind: "message", createdAt: new Date().toISOString(), sender: { ...identity, root: repo.root }, recipients, text, files };
     signal?.throwIfAborted();
     await writeJson(join(repo.directory, "events", `${event.id}.json`), event);
     return event;

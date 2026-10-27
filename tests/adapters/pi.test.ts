@@ -1,3 +1,4 @@
+import { piIdentity } from "../../src/adapters/pi/identity.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { execFileSync } from "node:child_process";
@@ -157,7 +158,7 @@ test("pi join and leave preserve queued relay IDs until the host persists them",
     assert.equal(ui.messages.length, 1);
     assert.deepEqual(ui.messages[0].details.eventIds, [event.id]);
     const repo = await repository(f.b);
-    const key = sessionKey(repo, { adapter: "pi", session: "pi-test" }, "refs/heads/main");
+    const key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
     assert.equal(await readReceipt(repo, key, event.id), undefined);
     await ui.run("join");
     await ui.run("join");

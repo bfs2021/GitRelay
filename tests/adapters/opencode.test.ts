@@ -8,7 +8,9 @@ import { pathToFileURL } from "node:url";
 import type { Plugin } from "@opencode/plugin";
 import plugin from "../../src/adapters/opencode/index.ts";
 import { listSessions, readReceipt, sendMessage, sessionKey } from "../../src/core/mailbox.ts";
-import { repository } from "../../src/core/store.ts";
+import { hash, repository } from "../../src/core/store.ts";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import { fixture } from "../helpers.ts";
 
 type Prompt = Parameters<Plugin.Context["session"]["prompt"]>[0];
@@ -21,17 +23,20 @@ async function waitFor(check: () => Promise<boolean>) {
 }
 
 async function harness(t: TestContext, prompt: (input: Prompt, signal?: AbortSignal) => Promise<void>, nonGit = false) {
+  let finish = async () => {};
+  t.after(() => finish());
   const f = await fixture(t);
   t.mock.timers.enable({ apis: ["setInterval"] });
   let onPrompt!: (event: { sessionID: string; metadata?: Record<string, unknown> }) => Promise<void>;
   let disposeHook = async () => {};
   let wake = Promise.withResolvers<void>();
   const events: { type: "session.deleted"; data: { sessionID: string }; handled(): void }[] = [];
+  let created = 1;
   const locations = new Map<string, { location: { directory: string }; parentID?: string }>();
   const context = {
     location: { directory: nonGit ? f.root : f.b },
     session: {
-      async get({ sessionID }: { sessionID: string }) { return locations.get(sessionID) ?? { location: { directory: f.b } }; },
+      async get({ sessionID }: { sessionID: string }) { return { time: { created }, ...(locations.get(sessionID) ?? { location: { directory: f.b } }) }; },
       async hook(name: string, handler: typeof onPrompt) {
         assert.equal(name, "prompt");
         onPrompt = handler;
@@ -62,25 +67,26 @@ async function harness(t: TestContext, prompt: (input: Prompt, signal?: AbortSig
   const cleanup = await plugin.setup(context as unknown as Plugin.Context);
   let closed = false;
   const close = async () => { if (!closed) { closed = true; await cleanup(); } };
-  t.after(close);
+  finish = close;
   const id = "ses_receiver";
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "opencode", session: id }, "refs/heads/main");
+  const keyFor = (session = id) => sessionKey(repo, { adapter: "opencode", session, instance: hash([resolve(process.env.XDG_DATA_HOME || homedir()), created]) }, "refs/heads/main");
   return {
-    ...f, id, repo, key, locations, session: context.session,
+    ...f, id, repo, get key() { return keyFor(); }, keyFor, locations, session: context.session,
     hookRegistered: () => Boolean(onPrompt),
     setDispose: (dispose: () => Promise<void>) => { disposeHook = dispose; },
     enroll: (sessionID = id, metadata?: Prompt["metadata"]) => onPrompt({ sessionID, metadata }),
     tick: () => t.mock.timers.tick(5000),
     close,
     removed(sessionID = id) {
+      created++;
       const done = Promise.withResolvers<void>();
       events.push({ type: "session.deleted", data: { sessionID }, handled: done.resolve });
       wake.resolve();
       wake = Promise.withResolvers<void>();
       return done.promise;
     },
-    async unlocked() { return !await stat(join(repo.directory, "sessions", `${key}.lock`)).catch(() => undefined); },
+    async unlocked() { return !await stat(join(repo.directory, "sessions", `${keyFor()}.lock`)).catch(() => undefined); },
   };
 }
 
@@ -165,9 +171,12 @@ test("OpenCode retries a lost admission response with the same per-event ID", as
   const second = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "second event" });
   f.tick();
   await waitFor(async () => (await readReceipt(f.repo, f.key, second.id))?.status === "delivered");
-  assert.equal(attempts[0].id, attempts[1].id);
-  assert.match(attempts[0].id!, /^msg_/);
-  assert.notEqual(attempts[1].id, attempts[2].id);
+  const retried = attempts.filter((input) => input.text?.includes(first.id));
+  const other = attempts.filter((input) => input.text?.includes(second.id));
+  assert.equal(retried.length, 2);
+  assert.equal(retried[0].id, retried[1].id);
+  assert.match(retried[0].id!, /^msg_/);
+  assert.notEqual(retried[0].id, other[0].id);
   assert.equal(admitted.size, 2, "the accepted first event is not admitted again");
   assert.equal((await readReceipt(f.repo, f.key, first.id))?.status, "delivered");
 });
@@ -210,7 +219,7 @@ test("OpenCode uses different message IDs for different receiving sessions", asy
   await f.enroll("two");
   const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "broadcast" });
   f.tick();
-  await waitFor(async () => (await Promise.all(["one", "two"].map((session) => readReceipt(f.repo, sessionKey(f.repo, { adapter: "opencode", session }, "refs/heads/main"), event.id)))).every((receipt) => receipt?.status === "delivered"));
+  await waitFor(async () => (await Promise.all(["one", "two"].map((session) => readReceipt(f.repo, f.keyFor(session), event.id)))).every((receipt) => receipt?.status === "delivered"));
   assert.equal(calls.length, 2);
   assert.notEqual(calls[0].id, calls[1].id);
 });
@@ -287,22 +296,23 @@ test("OpenCode rechecks a recreated session even when it reuses a deleted ID", a
   await f.enroll();
   const event = await sendMessage({ cwd: f.a, adapter: "pi", session: "sender", text: "recreated session" });
   f.tick();
-  await waitFor(async () => (await readReceipt(f.repo, f.key, event.id))?.status === "delivered");
+  await waitFor(async () => calls.some((input) => input.text?.includes(event.id)));
   assert.equal(calls.filter((input) => input.text?.includes(event.id)).length, 1);
 });
 
-test("OpenCode must not deliver an old inbox to a recreated session with the same ID", { todo: "Native session incarnation is not yet bound to the GitRelay subscription" }, async (t) => {
+test("OpenCode must not deliver an old inbox to a recreated session with the same ID", async (t) => {
   const calls: Prompt[] = [];
   const f = await harness(t, async (input) => { calls.push(input); });
   await f.enroll();
   const old = await sendMessage({ cwd: f.a, adapter: "pi", session: "sender", text: "unread for the old session" });
+  const oldKey = f.key;
   await f.removed();
   await f.enroll(); // The host has created a different session with the same native ID.
-  const before = (await listSessions(f.b))[0].lastSeen;
+  const before = (await listSessions(f.b)).find((session) => session.key === f.key)!.lastSeen;
   await delay(5);
   f.tick();
-  await waitFor(async () => (await listSessions(f.b))[0].lastSeen !== before && await f.unlocked());
-  assert.equal(await readReceipt(f.repo, f.key, old.id), undefined, "the old event must not be acknowledged by the replacement");
+  await waitFor(async () => (await listSessions(f.b)).find((session) => session.key === f.key)!.lastSeen !== before && await f.unlocked());
+  assert.equal(await readReceipt(f.repo, oldKey, old.id), undefined, "the old event must not be acknowledged by the replacement");
   assert.equal(calls.some((input) => input.text?.includes(old.id)), false, "the replacement must not receive the old event");
 });
 
@@ -466,14 +476,14 @@ test("OpenCode polling isolates a stalled session and cancels it on cleanup", as
   await f.enroll("healthy");
   const event = await sendMessage({ cwd: f.a, adapter: "cli", session: "sender", text: "independent polling" });
   f.tick();
-  const healthyKey = sessionKey(f.repo, { adapter: "opencode", session: "healthy" }, "refs/heads/main");
+  const healthyKey = f.keyFor("healthy");
   await waitFor(async () => (await readReceipt(f.repo, healthyKey, event.id))?.status === "delivered");
   await started.promise;
   f.tick();
   f.tick();
   assert.equal(calls.filter((id) => id === "hung").length, 1);
   assert.equal(calls.filter((id) => id === "healthy").length, 1);
-  const hungKey = sessionKey(f.repo, { adapter: "opencode", session: "hung" }, "refs/heads/main");
+  const hungKey = f.keyFor("hung");
   assert.equal(await readReceipt(f.repo, hungKey, event.id), undefined);
   await f.close();
   await stopped.promise;
@@ -511,7 +521,7 @@ test("OpenCode handles other deletions while an aborted host call is still runni
       delay(1000).then(() => { throw new Error("second deletion was blocked"); }),
     ]);
     await Promise.all([firstRemoved, secondRemoved]);
-    const firstKey = sessionKey(f.repo, { adapter: "opencode", session: "first" }, "refs/heads/main");
+    const firstKey = f.keyFor("first");
     assert.equal(await readReceipt(f.repo, firstKey, event.id), undefined);
     let closed = false;
     const closing = f.close().then(() => { closed = true; });
@@ -556,7 +566,7 @@ test("OpenCode polling delivers each broadcast to all ten sessions without overl
     const event = await sendMessage({ cwd: f.a, adapter: "cli", session: "sender", text: `round ${round}` });
     f.tick();
     f.tick(); // A slow scan must not launch a second scan for the same session.
-    await waitFor(async () => (await Promise.all(ids.map((id) => readReceipt(f.repo, sessionKey(f.repo, { adapter: "opencode", session: id }, "refs/heads/main"), event.id)))).every((receipt) => receipt?.status === "delivered"));
+    await waitFor(async () => (await Promise.all(ids.map((id) => readReceipt(f.repo, f.keyFor(id), event.id)))).every((receipt) => receipt?.status === "delivered"));
     for (const id of ids) assert.equal(calls.filter((input) => input.sessionID === id && input.text?.includes(event.id)).length, 1);
   }
 });

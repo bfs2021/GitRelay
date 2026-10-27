@@ -1,8 +1,8 @@
 import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { inspectChange, pathMatcher, readCursor, resolveMain, worktreeFiles, type Change, type Cursor } from "./changes.ts";
+import { HistoryUnavailableError, inspectChange, pathMatcher, readCursor, resolveMain, worktreeFiles, type Change, type Cursor } from "./changes.ts";
 import { eventsIn, publishUpstream, readSession, registerSession, sessionKey, validateIdentity, type Identity, type Notification, type SharedEvent } from "./mailbox.ts";
-import { BusyError, GC_LOCK_TOKEN, checkStateDirectory, readJson, repository, repositoryMetadata, withLock, writeJson, type Repository } from "./store.ts";
+import { BusyError, GC_LOCK_TOKEN, checkStateDirectory, isId, readJson, repository, repositoryMetadata, withLock, writeJson, type Repository } from "./store.ts";
 import { synchronizeRef } from "./publisher.ts";
 
 export interface DeliveryLocation { repository: Repository; sessionKey: string }
@@ -22,6 +22,8 @@ export interface MailboxOptions extends Identity {
   /** Deliver and acknowledge one notification at a time. */
   deliverIndividually?: boolean;
   upstreamOnly?: boolean;
+  /** Explicitly accept a notification that history could not be compared, rather than a diff. */
+  acknowledgeUnavailableHistory?: boolean;
 }
 
 /** Register, publish shared ref updates, then consume this session's independent inbox. */
@@ -33,7 +35,8 @@ async function consumeMailboxInternal(options: MailboxOptions, individually: boo
   const adapter = options.adapter;
   validateIdentity({ adapter, session: "snapshot" });
   const session = options.session;
-  const identity = { adapter, session };
+  validateIdentity({ adapter, session });
+  const identity = { adapter, session, instance: options.instance };
   validateIdentity(identity);
   const signal = options.signal;
   signal?.throwIfAborted();
@@ -99,7 +102,13 @@ async function consumeMailboxInternal(options: MailboxOptions, individually: boo
         return piProofs.has(id);
       };
       let size = 0;
-      for (const event of await eventsIn(repo, key, signal)) {
+      const events = await eventsIn(repo, key, signal);
+      const cursorPath = join(receipts, "delivery-cursor.json");
+      const cursor = await readJson(cursorPath) as { after?: string } | undefined;
+      if (cursor !== undefined && (!cursor || !isId(cursor.after))) throw new Error(`Invalid delivery cursor: ${cursorPath}`);
+      const start = cursor ? events.findIndex((event) => event.id === cursor.after) + 1 : 0;
+      let historyFailure: HistoryUnavailableError | undefined;
+      for (const event of [...events.slice(start), ...events.slice(0, start)]) {
         signal?.throwIfAborted();
         if (!event.recipients.includes(key) || (options.upstreamOnly && event.kind !== "upstream")) continue;
         if (event.kind === "upstream" && event.ref !== ref) throw new Error(`Upstream event ${event.id} targets a session subscribed to another ref; preserve state for inspection.`);
@@ -126,7 +135,13 @@ async function consumeMailboxInternal(options: MailboxOptions, individually: boo
         if (hasProof) throw unknownProof();
         let notification: Notification | undefined;
         if (event.kind === "upstream" && event.ref === ref) {
-          const change = await inspectChange({ root: repo.root, ref: event.ref, commit: event.previous }, event.commit, signal);
+          let change: Change | undefined;
+          try { change = await inspectChange({ root: repo.root, ref: event.ref, commit: event.previous }, event.commit, signal); }
+          catch (error) {
+            if (!(error instanceof HistoryUnavailableError)) throw error;
+            if (!options.acknowledgeUnavailableHistory) { historyFailure ??= error; continue; }
+            change = { root: repo.root, ref: event.ref, commit: event.commit, previous: event.previous, eventId: event.id, rewritten: false, unavailable: true, files: [], commits: [], patch: "" };
+          }
           if (change) notification = { kind: "upstream", event, change: { ...change, eventId: event.id } };
         } else if (event.kind === "message") {
           if (event.files.length && !overlaps) {
@@ -145,8 +160,13 @@ async function consumeMailboxInternal(options: MailboxOptions, individually: boo
         notifications.push(notification);
         size += length;
       }
-      if (!notifications.length) return [];
+      if (!notifications.length) {
+        if (historyFailure) throw historyFailure;
+        return [];
+      }
       signal?.throwIfAborted();
+      // Rotation never acknowledges an event; a crash only changes the next retry's starting point.
+      await writeJson(cursorPath, { after: notifications.at(-1)!.event.id }, signal ? () => signal.throwIfAborted() : undefined);
       for (const batch of individually ? notifications.map((notification) => [notification]) : [notifications]) {
         const accepted = await options.deliver(batch, { repository: repo, sessionKey: key });
         signal?.throwIfAborted();
@@ -154,6 +174,7 @@ async function consumeMailboxInternal(options: MailboxOptions, individually: boo
           for (const notification of batch) await writeReceipt(join(receipts, `${notification.event.id}.json`), notification.event.id, "delivered");
         }
       }
+      if (historyFailure) throw historyFailure;
       return notifications;
     }, { signal, onAcquired: () => { sessionAcquired = true; } });
   } catch (error) {

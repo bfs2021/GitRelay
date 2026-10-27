@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -215,6 +217,29 @@ test("daemon retries cleanup when a recipient was busy", async (t) => {
   assert.ok(!(await eventsIn(repo)).some((item) => item.id === event.id));
   abort.abort();
   await running;
+});
+
+test("a repository without metadata does not consume its first maintenance attempt", async (t) => {
+  const abort = new AbortController();
+  let running: Promise<void> | undefined;
+  t.after(async () => { abort.abort(); await running; });
+  const f = await fixture(t), repo = await repository(f.b), missed = Promise.withResolvers<void>();
+  const original = fs.promises.lstat;
+  const mocked = t.mock.method(fs.promises, "lstat", (async (...args: Parameters<typeof original>) => {
+    try { return await original(...args); }
+    catch (error) {
+      if (args[0] === join(repo.directory, "repo.json") && (error as NodeJS.ErrnoException).code === "ENOENT") missed.resolve();
+      throw error;
+    }
+  }) as typeof original);
+  syncBuiltinESMExports();
+  t.after(() => { mocked.mock.restore(); syncBuiltinESMExports(); });
+  t.mock.method(performance, "now", () => 100);
+  const reports: any[] = [];
+  running = runDaemon({ signal: abort.signal, intervalMs: 50, onEvent(value: any) { if (value.type === "daemon.cleanup") reports.push(value); } });
+  await Promise.race([missed.promise, delay(5000).then(() => { throw new Error("daemon did not inspect the pending repository"); })]);
+  await consumeMailbox({ cwd: f.b, ref: "refs/heads/main", adapter: "test", session: "late", async deliver() {} });
+  await waitFor(async () => reports.some((report) => report.repo === repo.id));
 });
 
 test("blocked daemon output releases publish.lock and remains abortable", async (t) => {

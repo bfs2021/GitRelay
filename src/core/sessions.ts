@@ -103,7 +103,7 @@ async function leavingRepository(options: LeaveOptions): Promise<Repository> {
 function snapshotIdentity(options: Identity): Identity {
   const adapter = options.adapter;
   validateIdentity({ adapter, session: "snapshot" });
-  const identity = { adapter, session: options.session };
+  const identity = { adapter, session: options.session, instance: options.instance };
   validateIdentity(identity);
   return identity;
 }

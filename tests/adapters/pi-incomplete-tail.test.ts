@@ -1,3 +1,4 @@
+import { piIdentity } from "../../src/adapters/pi/identity.ts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
@@ -31,7 +32,7 @@ for (const [name, tail] of [
     await appendFile(file, tail);
     const corrupted = await readFile(file);
     await watcher.tick();
-    const repo = await repository(f.b), key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+    const repo = await repository(f.b), key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
     assert.deepEqual(await readFile(file), corrupted);
     assert.equal(queued.length, 0);
     assert.equal(await readJson(join(repo.directory, "receipts", key, `${event.id}.json`)), undefined);
@@ -61,7 +62,7 @@ test("complete malformed line with newline does not block pi", async (t) => {
   await appendFile(file, "{malformed}\n");
   const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "marked event" });
   await watcher.tick(); await watcher.tick();
-  const repo = await repository(f.b), key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const repo = await repository(f.b), key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   assert.equal(queued.length, 1);
   assert.equal((await readJson(join(repo.directory, "receipts", key, `${event.id}.json`)) as { status: string }).status, "delivered");
   assert.deepEqual(warnings, []);
@@ -92,7 +93,7 @@ test("pi keeps UTF-8 decoding across the 64 KiB stream boundary", async (t) => {
   await watcher.tick();
   const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "marked event" });
   await watcher.tick(); await watcher.tick();
-  const repo = await repository(f.b), key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const repo = await repository(f.b), key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   assert.equal(queued.length, 1);
   assert.equal((await readJson(join(repo.directory, "receipts", key, `${event.id}.json`)) as { status: string }).status, "delivered");
   assert.deepEqual(warnings, []);
@@ -133,7 +134,7 @@ for (const phase of ["send", "confirm"] as const) {
     assert.ok(injected);
     assert.equal(queued.length, phase === "send" ? 0 : 1);
     assert.ok(warnings.some((warning) => warning.includes(`changed before delivery${phase === "confirm" ? " confirmation" : ""}`)), warnings.join("\n"));
-    const repo = await repository(f.b), key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+    const repo = await repository(f.b), key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
     assert.equal(await readJson(join(repo.directory, "receipts", key, `${event.id}.json`)), undefined);
     assert.ok((await readFile(file, "utf8")).endsWith('{"partial'));
   });
@@ -158,7 +159,7 @@ test("pi keeps a persisted message unconfirmed when its final newline is missing
   const partial = complete.subarray(0, -1);
   await writeFile(file, partial);
   await watcher.tick();
-  const repo = await repository(f.b), key = sessionKey(repo, { adapter: "pi", session: manager.getSessionId() }, "refs/heads/main");
+  const repo = await repository(f.b), key = sessionKey(repo, piIdentity(manager), "refs/heads/main");
   assert.equal(await readJson(join(repo.directory, "receipts", key, `${event.id}.json`)), undefined);
   assert.deepEqual(await readFile(file), partial);
   assert.equal(queued.length, 1);
