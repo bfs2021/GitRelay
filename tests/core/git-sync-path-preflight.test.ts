@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { fixture, git } from "../helpers.ts";
 import { syncBranch } from "../../src/core/branch-sync.ts";
+import { git as readGit, gitPathLine } from "../../src/core/git.ts";
 
 async function remoteFixture(t: TestContext) {
   const f = await fixture(t),
@@ -58,6 +59,35 @@ const names = async (path: string) =>
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line) as string[]);
+
+test(
+  "Git operation-path reader rejects invalid UTF-8 without fetching or changing files",
+  {
+    skip: process.platform === "win32",
+  },
+  async (t) => {
+    const f = await remoteFixture(t);
+    const before = git(f.main, "rev-parse", "refs/remotes/origin/main").trim();
+    const w = await gitWrapper(f, "invalid-path");
+    try {
+      await assert.rejects(
+        readGit(f.main, ["rev-parse", "--path-format=absolute", "--git-path", "MERGE_HEAD"], undefined, "paths"),
+        /not valid UTF-8/i,
+      );
+      const calls = await names(w.calls);
+      assert.equal(calls.length, 1);
+      assert.ok(!calls.some((a) => a.includes("fetch") || a.includes("merge")));
+    } finally {
+      w.restore();
+    }
+    const path = gitPathLine(
+      await readGit(f.main, ["rev-parse", "--path-format=absolute", "--git-path", "MERGE_HEAD"], undefined, "paths"),
+    );
+    assert.equal(path, w.operation);
+    assert.equal(git(f.main, "rev-parse", "refs/remotes/origin/main").trim(), before);
+    assert.equal(await readFile(join(f.main, "shared.txt"), "utf8"), "base\n");
+  },
+);
 
 test(
   "unrepresentable git-path fails before fetch and waits for sibling processes",

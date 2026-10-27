@@ -207,12 +207,14 @@ async function main() {
     if (!Number.isInteger(interval) || interval < (network ? 5000 : 50) || interval > 3_600_000)
       throw new Error(`interval-ms must be an integer between ${network ? 5000 : 50} and 3600000.`);
     const cwd = values.cwd ?? process.cwd();
-    // Pin the authorized sync target so a checkout cannot redirect a running writer.
-    const branch =
-      values.branch ??
-      (values["auto-sync"]
-        ? gitRefLine(await git(cwd, ["symbolic-ref", "--short", "HEAD"], abort.signal, "paths"))
-        : undefined);
+    let branch = values.branch;
+    if (branch === undefined && values["auto-sync"]) {
+      // --short can return heads/NAME when a tag has the same name.
+      const ref = gitRefLine(await git(cwd, ["symbolic-ref", "HEAD"], abort.signal, "paths"));
+      if (!ref.startsWith("refs/heads/"))
+        throw new Error("HEAD does not point to a local branch; choose --branch NAME.");
+      branch = ref.slice("refs/heads/".length);
+    }
     let previous: string | undefined;
     do {
       try {

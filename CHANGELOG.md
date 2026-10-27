@@ -5,6 +5,8 @@
 - Restrict maintained integrations to Codex and OpenCode v2, with sessions off by default.
 - Require explicit session activation; preserve unread messages when disabling or migrating.
 - Keep automatic branch synchronization blocked pending safe worktree binding.
+- Preserve the exact monitored branch when a tag has the same name, including Unicode whitespace.
+- Separate read-only Git validation from pending synchronization tests and retain a deterministic checkout-race regression.
 - Stabilize the OpenCode lost-response regression around independently persisted receipts.
 - Add formatting, unused-code and release-metadata checks to local validation and CI.
 - Document source-release checks and reproducible benchmark evidence.

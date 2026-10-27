@@ -42,6 +42,50 @@ test("disabled sync honors cancellation before returning", async () => {
   await assert.rejects(syncBranch("unused", "unused", controller.signal), { name: "AbortError" });
 });
 
+test("worktree lock and final identity checks cannot prevent a subsequent checkout", async (t) => {
+  const f = await fixture(t);
+  git(f.a, "branch", "alternate");
+  const incoming = await f.commit(f.main, "shared.txt", "incoming\n");
+  git(f.main, "worktree", "lock", f.a);
+  assert.equal(git(f.a, "symbolic-ref", "HEAD").trim(), "refs/heads/feature/a");
+  assert.equal(git(f.a, "rev-parse", "HEAD").trim(), f.initial);
+  // This is the exact gap between the old final check and its merge.
+  git(f.a, "switch", "alternate");
+  const result = await syncBranch(f.a, "feature/a");
+  assert.equal(result.state, "blocked");
+  assert.equal(git(f.a, "rev-parse", "refs/heads/alternate").trim(), f.initial);
+  assert.equal(await readFile(join(f.a, "shared.txt"), "utf8"), "base\n");
+  // Pinning the incoming OID still lets a merge advance the wrong branch.
+  git(f.a, "merge", "--ff-only", "--no-autostash", "--no-overwrite-ignore", incoming);
+  assert.equal(git(f.a, "rev-parse", "refs/heads/feature/a").trim(), f.initial);
+  assert.equal(git(f.a, "rev-parse", "refs/heads/alternate").trim(), incoming);
+  assert.equal(await readFile(join(f.a, "shared.txt"), "utf8"), "incoming\n");
+  git(f.main, "worktree", "unlock", f.a);
+});
+
+test("CLI rejects conflicting sync flags and ambiguous sources before querying Git", async () => {
+  const cli = new URL("../../src/cli/main.ts", import.meta.url).pathname;
+  for (const [flags, message] of [
+    [["--auto-sync", "--no-auto-sync"], /Choose/],
+    [["--github", "--auto-sync", "--repo", "owner/repo"], /omit --repo/],
+  ] as const) {
+    const child = spawn(process.execPath, ["--experimental-strip-types", cli, "status", ...flags], {
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (data) => {
+      stderr += String(data);
+    });
+    const code = await new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    });
+    assert.equal(code, 1);
+    assert.match(stderr, message);
+  }
+});
+
 test("auto-sync watch continues read-only status and reports blocked", async (t) => {
   const f = await fixture(t),
     cli = new URL("../../src/cli/main.ts", import.meta.url).pathname;

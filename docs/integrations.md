@@ -227,6 +227,43 @@ Default GitHub queries neither update remote-tracking refs nor download objects.
 
 Automatic branch synchronization is temporarily unavailable because concurrent checkout can redirect a merge to a different branch. `--auto-sync` returns `blocked` before fetching or changing the worktree. A one-shot invocation exits 1; watch continues monitoring without Git writes. The CLI can still write a requested `--output` file or publish status changes when `--session` is supplied. `--no-auto-sync` still selects read-only monitoring. Existing older processes continue running across upgrades and must be stopped in their own terminals. See [migration guidance](migration.md#monitoring-and-automatic-synchronization) for the manual alternative and its concurrency limits.
 
+The CLI reads the full symbolic HEAD and removes only `refs/heads/` when selecting
+the monitored branch. Git's abbreviated symbolic ref can include `heads/` if a
+tag shares the branch name. Unicode whitespace is preserved, invalid UTF-8 is
+rejected, and a symbolic HEAD outside local branches requires an explicit
+`--branch` for monitoring. Selecting a branch does not protect a future write.
+
+### Recovery gates
+
+Read-only validation has ordinary tests for exact upstream selection, Unicode
+whitespace, invalid HEAD bytes, single-record configuration parsing, and operation
+path decoding. These tests exercise existing readers without enabling fetch or
+merge. The pending synchronization cases still require the complete writer:
+
+| Pending behavior                                                      | Required before enabling writes                                                                                                 |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Fetch and fast-forward, including Unicode refs                        | Bind the authorized repository, worktree, local ref, upstream and expected object IDs throughout the write                      |
+| Dirty and ignored data, divergence and Git operations                 | Preserve local data, forbid automatic stash/reset/rebase, and inspect all operation markers before fetch and again before merge |
+| Invalid refs, multiple config records and undecodable operation paths | Apply the validated readers in the writer before fetch; settle sibling Git processes before returning an error                  |
+| Concurrent checkout, commit or index modification                     | Demonstrate safety against external Git processes, with deterministic barriers around each write boundary                       |
+| Cancellation, partial failure and restart                             | Specify recovery without blind rollback or retry; retain user changes and report which writes completed                         |
+
+`tests/core/auto-sync-stopgap.test.ts` includes an isolated real-Git counterexample:
+after a worktree lock and final HEAD/ref checks, another checkout still succeeds,
+and merging a pinned incoming object ID advances the newly checked-out branch.
+The current blocked implementation leaves both branches unchanged at that point.
+A private GitRelay lock, another final check, or `git worktree lock` alone therefore
+does not satisfy the write boundary. A ref-only transaction also needs a protocol
+for the index and working files. An exclusively owned worktree would require an
+enforced ownership model; it cannot be assumed for a user's existing worktree.
+
+After a write protocol is implemented, remove TODOs only when their full integration
+assertions pass, add adversarial concurrency and interruption tests, and rerun
+the synchronization benchmark and relevant native-client acceptance. Passing the
+old TODO cases alone does not establish concurrency safety. Automatic fetch with
+notification would be a separate feature: it writes remote-tracking refs and
+does not restore automatic fast-forwarding.
+
 ## State, recovery, and limitations
 
 - Shared state uses `worktree-agent-sync/repos/<repo-id>/`, with `XDG_STATE_HOME` / `WORKTREE_SYNC_STATE_DIR` overrides. Events are repository-wide; receipts are per session. Repository identity combines the canonical Git common-directory path with a persistent marker, or an explicit mapping for a read-only directory. Earlier path-keyed shared state needs an explicit migration or fresh-state choice; [see the migration procedure](migration.md#repository-identity-and-existing-state). Legacy Git-directory cursors are imported read-only.
