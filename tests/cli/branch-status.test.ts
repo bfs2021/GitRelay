@@ -57,6 +57,109 @@ test("status handles unborn branches", async (t) => {
   const status = JSON.parse((await run("status", "--cwd", empty)).stdout);
   assert.equal(status.worktree.commit, null);
   assert.equal(status.local.commit, null);
+  assert.equal(status.local.tracking, null);
+  git(empty, "remote", "add", "origin", f.main);
+  git(empty, "fetch", "origin", "main");
+  git(empty, "config", "branch.main.remote", "origin");
+  git(empty, "config", "branch.main.merge", "refs/heads/main");
+  for (const args of [[], ["--branch", "main"]]) {
+    const tracked = JSON.parse((await run("status", "--cwd", empty, ...args)).stdout);
+    assert.deepEqual(tracked.local.tracking, {
+      ref: "refs/remotes/origin/main",
+      commit: f.initial,
+      ahead: null,
+      behind: null,
+    });
+    assert.match(
+      (await run("status", "--cwd", empty, "--format", "markdown", ...args)).stdout,
+      /refs\/remotes\/origin\/main/,
+    );
+  }
+  assert.equal(JSON.parse((await run("status", "--cwd", empty, "--branch", "@")).stdout).local.tracking, null);
+  git(empty, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+  git(empty, "config", "branch.main.merge", "refs/heads/HEAD");
+  assert.deepEqual(JSON.parse((await run("status", "--cwd", empty)).stdout).local.tracking, {
+    ref: "refs/remotes/origin/HEAD",
+    commit: f.initial,
+    ahead: null,
+    behind: null,
+  });
+  git(empty, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD");
+  git(empty, "config", "branch.main.merge", "refs/heads/main");
+  git(empty, "update-ref", "-d", "refs/remotes/origin/main");
+  for (const args of [[], ["--branch", "main"]]) {
+    assert.deepEqual(JSON.parse((await run("status", "--cwd", empty, ...args)).stdout).local.tracking, {
+      ref: "refs/remotes/origin/main",
+      commit: null,
+      ahead: null,
+      behind: null,
+    });
+  }
+  git(empty, "config", "--replace-all", "remote.origin.fetch", "+refs/heads/m*:refs/custom/z*");
+  git(empty, "config", "--add", "remote.origin.fetch", "+refs/heads/*:refs/other/*");
+  git(empty, "config", "--add", "remote.origin.fetch", "^refs/heads/main");
+  git(empty, "config", "--add", "branch.main.merge", "refs/heads/other");
+  assert.match(git(empty, "status", "--porcelain=v2", "--branch"), /# branch\.upstream custom\/zain/);
+  assert.deepEqual(JSON.parse((await run("status", "--cwd", empty)).stdout).local.tracking, {
+    ref: "refs/custom/zain",
+    commit: null,
+    ahead: null,
+    behind: null,
+  });
+  git(empty, "config", "branch.other.remote", ".");
+  git(empty, "config", "branch.other.merge", "refs/heads/missing");
+  assert.deepEqual(JSON.parse((await run("status", "--cwd", empty, "--branch", "other")).stdout).local.tracking, {
+    ref: "refs/heads/missing",
+    commit: null,
+    ahead: null,
+    behind: null,
+  });
+  git(empty, "config", "branch.other.merge", "missing");
+  assert.deepEqual(JSON.parse((await run("status", "--cwd", empty, "--branch", "other")).stdout).local.tracking, {
+    ref: "missing",
+    commit: null,
+    ahead: null,
+    behind: null,
+  });
+  git(empty, "update-ref", "refs/heads/missing", f.initial);
+  assert.deepEqual(JSON.parse((await run("status", "--cwd", empty, "--branch", "other")).stdout).local.tracking, {
+    ref: "refs/heads/missing",
+    commit: f.initial,
+    ahead: null,
+    behind: null,
+  });
+  git(empty, "update-ref", "refs/heads/shared", f.initial);
+  git(empty, "update-ref", "refs/tags/shared", f.initial);
+  git(empty, "config", "branch.other.merge", "shared");
+  assert.deepEqual(JSON.parse((await run("status", "--cwd", empty, "--branch", "other")).stdout).local.tracking, {
+    ref: "shared",
+    commit: null,
+    ahead: null,
+    behind: null,
+  });
+  git(empty, "config", "branch.other.merge", "refs/heads/missing");
+  git(empty, "config", "remote...fetch", "+refs/heads/*:refs/remotes/local/*");
+  git(empty, "symbolic-ref", "HEAD", "refs/heads/other");
+  assert.match(git(empty, "status", "--porcelain=v2", "--branch"), /# branch\.upstream local\/missing/);
+  assert.deepEqual(JSON.parse((await run("status", "--cwd", empty)).stdout).local.tracking, {
+    ref: "refs/remotes/local/missing",
+    commit: null,
+    ahead: null,
+    behind: null,
+  });
+  git(empty, "symbolic-ref", "HEAD", "refs/heads/main");
+  git(empty, "config", "--unset-all", "remote...fetch");
+  git(empty, "config", "--replace-all", "branch.main.merge", "refs/heads/price$&");
+  git(empty, "config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*");
+  git(empty, "update-ref", "refs/remotes/origin/price$&", f.initial);
+  assert.deepEqual(JSON.parse((await run("status", "--cwd", empty)).stdout).local.tracking, {
+    ref: "refs/remotes/origin/price$&",
+    commit: f.initial,
+    ahead: null,
+    behind: null,
+  });
+  git(empty, "config", "--replace-all", "remote.origin.fetch", "+refs/heads/other:refs/custom/other");
+  assert.equal(JSON.parse((await run("status", "--cwd", empty)).stdout).local.tracking, null);
 });
 
 test("explicit empty CLI options are rejected", async (t) => {
