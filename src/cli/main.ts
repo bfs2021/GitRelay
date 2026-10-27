@@ -70,6 +70,7 @@ function reportDiagnostic(message: string): void {
 }
 
 let outputFailed = false;
+let hookDelivered = false;
 let installationCommand = false;
 let longRunningCommand = false;
 async function validateWatchRef(ref: string): Promise<boolean> {
@@ -354,7 +355,9 @@ async function main() {
     const input = JSON.parse(data);
     if (!input || typeof input !== "object" || Array.isArray(input))
       throw new Error("Hook input must be a JSON object.");
-    await runHook(input, values.ref, output, abort.signal, values["branch-status"]);
+    const result = await runHook(input, values.ref, output, abort.signal, values["branch-status"]);
+    hookDelivered = result?.delivered === true;
+    if (result?.diagnostic) reportDiagnostic(`git-relay: ${result.diagnostic}`);
     return;
   }
   if (command === "daemon" && agent === "status" && positionals.length === 2) {
@@ -502,7 +505,7 @@ main()
         } catch {
           /* A closed stderr must not prevent cleanup. */
         }
-        process.exitCode ??= stopSignal === "SIGTERM" ? 143 : 130;
+        process.exitCode ??= hookDelivered ? 0 : stopSignal === "SIGTERM" ? 143 : 130;
       }
       process.exit(process.exitCode ?? 0);
     }
