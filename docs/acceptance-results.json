@@ -708,7 +708,16 @@
         "fail": 0,
         "cancelled": 0
       },
-      "nextHostedRun": "Triggered by the follow-up commit; report hosted result separately"
+      "nextHostedRun": "Triggered by the follow-up commit; report hosted result separately",
+      "secondRun": "https://github.com/shenyankm/GitRelay/actions/runs/40472620949",
+      "secondFailure": "Ubuntu Node 22.19 observed daemon cleanup after the fixture released its lock before the daemon had attempted it; enumeration order made the fixture nondeterministic",
+      "secondFix": "Observe the real EEXIST from the held publish.lock before releasing it; retain the existing maintenance retry and independent-repository assertions",
+      "localDaemonTests": {
+        "tests": 10,
+        "pass": 10,
+        "fail": 0,
+        "cancelled": 0
+      }
     }
   },
   "environment": {

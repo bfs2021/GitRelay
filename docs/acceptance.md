@@ -25,6 +25,8 @@ Evidence remains under `$TMPDIR/gitrelay-final-acceptance-ufn9r0og/`; exact sess
 
 The first hosted run passed Ubuntu/Node 22.19 but found one scheduling race in the Node 24 closed-pipe regression: the OS could accept the second record before the parent closed its reader. The follow-up test now gates the second actual write on the parent's closed-pipe handshake, preserving the original receipt and retry assertions. Production output code is unchanged. Local typecheck and all 12 CLI resilience checks passed after the fixture correction; the follow-up push reruns all four hosted matrix jobs. The first run's fail-fast cancellation of the macOS jobs is not a macOS result.
 
+A second hosted run passed the corrected Node 24 pipe check but exposed a separate daemon-fixture race on Ubuntu/Node 22.19: the other repository could be enumerated first, allowing the test to release its held lock before the daemon tried it. The fixture now waits for the real `EEXIST` on that lock as well as the independent repository's cleanup report. It retains the retry interval and new-repository assertions. Typecheck and all 10 local daemon checks passed; production daemon code is unchanged.
+
 Forced termination, power loss, Windows, every client version, and permanent exactly-once model work remain unverified. Automatic branch synchronization and worktree removal remain disabled. Older processes are not protocol-fenced; stop them before the native identity/legacy launcher migration and retain unbound inboxes for review. The existing installer locale-sensitive digest and external destination-directory publication race remain documented in [integrations](integrations.md#automatic-setup).
 
 ## Local regression suite (2026-10-27, Asia/Singapore)

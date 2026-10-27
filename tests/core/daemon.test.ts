@@ -174,9 +174,20 @@ test("daemon retries a busy repository without delaying another or a new reposit
   let elapsed = performance.now();
   t.mock.method(performance, "now", () => elapsed);
   const reports: any[] = [];
+  let busyObserved = false;
+  const open = fs.promises.open;
+  const mocked = t.mock.method(fs.promises, "open", (async (...args: Parameters<typeof open>) => {
+    try { return await open(...args); }
+    catch (error) {
+      if (args[0] === join(repo.directory, "publish.lock") && args[1] === "wx" && (error as NodeJS.ErrnoException).code === "EEXIST") busyObserved = true;
+      throw error;
+    }
+  }) as typeof open);
+  syncBuiltinESMExports();
+  t.after(() => { mocked.mock.restore(); syncBuiltinESMExports(); });
   await withLock(join(repo.directory, "publish.lock"), async () => {
     running = runDaemon({ signal: abort.signal, intervalMs: 50, retentionDays: 0, onEvent(value: any) { if (value.type === "daemon.cleanup") reports.push(value); } });
-    await waitFor(async () => reports.some((report) => report.repo === other.id));
+    await waitFor(async () => busyObserved && reports.some((report) => report.repo === other.id));
     assert.ok(!reports.some((report) => report.repo === repo.id));
   });
   await delay(150);
