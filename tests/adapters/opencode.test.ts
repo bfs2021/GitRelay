@@ -160,16 +160,27 @@ test("OpenCode v2 retries failed admission and acknowledges only durable accepta
     warnings.push(message);
   });
   let attempts = 0;
+  const failAdmission = Promise.withResolvers<void>();
+  t.after(() => failAdmission.resolve());
   const f = await harness(t, async () => {
-    if (++attempts === 1) throw new Error("admission failed");
+    if (++attempts === 1) {
+      await failAdmission.promise;
+      throw new Error("admission failed");
+    }
   });
   await f.enroll();
   const event = await sendMessage({ cwd: f.a, adapter: "codex", session: "sender", text: "retry" });
   f.tick();
-  await waitFor(async () => attempts === 1 && (await f.unlocked()));
+  await waitFor(async () => attempts === 1);
   assert.equal(await readReceipt(f.repo, f.key, event.id), undefined);
+  // A timer tick during an active admission is intentionally ignored.
   f.tick();
-  await waitFor(async () => (await readReceipt(f.repo, f.key, event.id))?.status === "delivered");
+  assert.equal(attempts, 1);
+  failAdmission.resolve();
+  await waitFor(async () => {
+    f.tick();
+    return (await readReceipt(f.repo, f.key, event.id))?.status === "delivered";
+  });
   assert.equal(attempts, 2);
   assert.equal(warnings.length, 1);
 });

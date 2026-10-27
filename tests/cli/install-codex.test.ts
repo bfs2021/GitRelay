@@ -468,13 +468,26 @@ test(
     };
     await writeFile(
       f.codex,
-      '#!/bin/sh\ntrap \'\' TERM\necho $$ > "$GITRELAY_PARENT_PID"\n/bin/sh -c \'trap "" TERM; echo $$ > "$GITRELAY_CHILD_PID"; while :; do /bin/sleep 1; done\' &\nwait\n',
+      '#!/bin/sh\ntrap \'\' TERM\n/bin/sleep 1\necho $$ > "$GITRELAY_PARENT_PID"\n/bin/sh -c \'trap "" TERM; echo $$ > "$GITRELAY_CHILD_PID"; while :; do /bin/sleep 1; done\' &\nwait\n',
     );
     const module = pathToFileURL(fileURLToPath(new URL("../../src/cli/install-codex.ts", import.meta.url))).href;
     const options = JSON.stringify({ workspace: f.workspace, sourceRoot: f.sourceRoot });
     const script = `
     const original = globalThis.setTimeout;
-    globalThis.setTimeout = (callback, delay, ...args) => original(callback, delay === 60000 ? 500 : delay, ...args);
+    const { readFileSync } = await import('node:fs');
+    globalThis.setTimeout = (callback, delay, ...args) => {
+      if (delay !== 60000) return original(callback, delay, ...args);
+      // Fire the simulated deadline only after both fixture processes exist.
+      const expire = () => {
+        try {
+          if ([process.env.GITRELAY_PARENT_PID, process.env.GITRELAY_CHILD_PID].every(
+            path => /^[1-9][0-9]*\\n$/.test(readFileSync(path, 'utf8'))
+          )) { callback(...args); return; }
+        } catch {}
+        original(expire, 10);
+      };
+      return original(expire, 10);
+    };
     const { installCodex } = await import(${JSON.stringify(module)});
     try { await installCodex(${options}); process.exitCode = 1; }
     catch (error) { if (!/Cannot inspect Codex plugins/.test(error.message)) throw error; }

@@ -8,6 +8,8 @@
 - Preserve the exact monitored branch when a tag has the same name, including Unicode whitespace.
 - Separate read-only Git validation from pending synchronization tests and retain a deterministic checkout-race regression.
 - Stabilize the OpenCode lost-response regression around independently persisted receipts.
+- Keep mocked polling active while testing admission retries, including ticks during an in-flight scan.
+- Trigger the Codex inspection timeout fixture after its process group is ready, including slow startup.
 - Add formatting, unused-code and release-metadata checks to local validation and CI.
 - Document source-release checks and reproducible benchmark evidence.
 - Record targeted Codex/OpenCode native acceptance and source-fingerprinted CLI benchmarks.
