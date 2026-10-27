@@ -1,5 +1,24 @@
 # GitRelay performance benchmarks
 
+## Path overlap lookup (2026-10-27, Asia/Singapore)
+
+The matcher sorts local paths and looks up possible descendants by prefix,
+instead of retaining a separate set of every parent directory. Exact local
+paths and candidate ancestors are still checked as before. Construction now
+includes a sort; checking an extremely deep candidate still examines its
+ancestors and can be expensive. This change does not bound total process
+memory or time for arbitrary path data.
+
+In isolated macOS arm64, Node 22.23.2 synthetic runs, three fresh processes per
+variant compared the same generated inputs. For 100,000 ordinary paths and
+10,000 queries, construction took 48/50/75 ms before and 20/18/19 ms after;
+queries took 5/9/9 ms before and 9/8/10 ms after. Both matched 3,337 queries;
+post-GC heap was about 26 MiB before and 22 MiB after. A single synthetic
+4 MB path with two million directory components took 400/264/280 ms to
+construct before and 0/1/0 ms after, with post-GC heap about 113 versus 11 MiB.
+The three queries in that extreme case were shallow. These are matcher-only
+measurements, not whole-delivery timings or real filesystem workloads.
+
 ## Reproduce
 
 ```sh

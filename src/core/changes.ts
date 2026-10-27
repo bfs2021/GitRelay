@@ -94,15 +94,21 @@ export async function pathMatcher(root: string, files: Set<string>, signal?: Abo
     throw error;
   });
   const normalize = (file: string) => ignoreCase ? file.toLowerCase() : file;
-  const own = new Set([...files].map(normalize));
-  const parents = new Set<string>();
-  for (const file of own) {
-    for (let end = file.indexOf("/"); end !== -1; end = file.indexOf("/", end + 1)) parents.add(file.slice(0, end));
-  }
+  // Git reports untracked embedded repositories as opaque directory paths ending in '/'.
+  const own = new Set([...files].map((file) => normalize(file.endsWith("/") ? file.slice(0, -1) : file)));
+  const sorted = [...own].sort();
   return (file) => {
     if (file === "." || file.endsWith("/")) return false;
     file = normalize(file);
-    if (own.has(file) || parents.has(file)) return true;
+    if (own.has(file)) return true;
+    const prefix = `${file}/`;
+    let low = 0, high = sorted.length;
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      if (sorted[mid] < prefix) low = mid + 1;
+      else high = mid;
+    }
+    if (sorted[low]?.startsWith(prefix)) return true;
     for (let end = file.indexOf("/"); end !== -1; end = file.indexOf("/", end + 1)) {
       if (own.has(file.slice(0, end))) return true;
     }
