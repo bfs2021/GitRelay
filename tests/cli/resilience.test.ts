@@ -61,8 +61,10 @@ for (const command of ["gc", "send", "join", "leave"]) {
       await waitFor(() => stderr.includes("publish-lock-held"));
       assert.equal((await readJson(join(repo.directory, "publish.lock")) as { pid: number }).pid, child.pid);
       child.kill("SIGINT");
+      await delay(20);
+      child.kill("SIGINT");
       const force = setTimeout(() => child.kill("SIGKILL"), 3000);
-      try { assert.equal(await exited, 0, stderr); }
+      try { assert.equal(await exited, 130, stderr); assert.match(stderr, /may have completed.*before retrying/i); }
       finally { clearTimeout(force); }
       assert.equal(await readJson(join(repo.directory, "publish.lock")), undefined);
       assert.equal(await readJson(join(repo.directory, "sessions", `${key}.lock`)), undefined);
@@ -73,6 +75,38 @@ for (const command of ["gc", "send", "join", "leave"]) {
     }
   });
 }
+
+test("interrupted send after publication reports an unknown outcome", async (t) => {
+  const f = await fixture(t);
+  const args = ["--cwd", f.b, "--session", "B"];
+  await run("check", ...args);
+  const repo = await repository(f.b);
+  const script = `
+    process.stdout.write = () => { process.stderr.write("output-blocked\\n"); setInterval(() => {}, 1000); return false; };
+    process.argv = ${JSON.stringify([process.execPath, "send", "--cwd", f.a, "--session", "sender", "--message", "published before output"])};
+    await import(${JSON.stringify(pathToFileURL(cli).href)});
+  `;
+  const child = spawn(process.execPath, ["--input-type=module", "--eval", script], { stdio: ["ignore", "pipe", "pipe"] });
+  const exited = new Promise<number | null>((resolve, reject) => { child.once("exit", resolve); child.once("error", reject); });
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (data: string) => { stderr += data; });
+  try {
+    await waitFor(() => stderr.includes("output-blocked"));
+    const events = await Promise.all((await readdir(join(repo.directory, "events"))).map((name) => readJson(join(repo.directory, "events", name))));
+    assert.ok(events.some((event) => (event as { text?: string })?.text === "published before output"));
+    child.kill("SIGTERM");
+    const force = setTimeout(() => child.kill("SIGKILL"), 3000);
+    try { assert.equal(await exited, 143, stderr); assert.match(stderr, /may have completed.*before retrying/i); }
+    finally { clearTimeout(force); }
+    assert.equal(await readJson(join(repo.directory, "publish.lock")), undefined);
+    assert.match((await run("check", ...args)).stdout, /published before output/);
+    assert.equal((await run("check", ...args)).stdout, "");
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    await exited;
+  }
+});
 
 for (const command of ["check", "watch"]) {
   test(`${command} cancels a real full stdout pipe without acknowledging or leaving a session lock`, async (t) => {
@@ -96,7 +130,7 @@ for (const command of ["check", "watch"]) {
       assert.equal(await readReceipt(repo, key, event.id), undefined);
       child.kill("SIGTERM");
       const force = setTimeout(() => child.kill("SIGKILL"), 3000);
-      try { assert.equal(await exited, 0, stderr); }
+      try { assert.equal(await exited, command === "check" ? 143 : 0, stderr); }
       finally { clearTimeout(force); }
       assert.equal(await readJson(join(repo.directory, "sessions", `${key}.lock`)), undefined);
       assert.equal(await readJson(join(repo.directory, "publish.lock")), undefined);
@@ -132,6 +166,43 @@ test("watch exits on a closed stdout pipe without acknowledging the event", asyn
   } finally { clearTimeout(force); }
 });
 
+for (const command of ["check", "watch"]) {
+  test(`${command} acknowledges a complete record before a later pipe failure`, async (t) => {
+    const f = await fixture(t);
+    const args = ["--cwd", f.b, "--session", "B"];
+    await run("check", ...args);
+    const repo = await repository(f.b);
+    const key = sessionKey(repo, { adapter: "cli", session: "B" }, "refs/heads/main");
+    const first = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "first record" });
+    const second = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: `second record ${"x".repeat(59_000)}` });
+    await writeJson(join(repo.directory, "events", `${first.id}.json`), { ...first, createdAt: "2026-01-01T00:00:01.000Z" });
+    await writeJson(join(repo.directory, "events", `${second.id}.json`), { ...second, createdAt: "2026-01-01T00:00:02.000Z" });
+    const child = spawn(process.execPath, [cli, command, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+    const exited = new Promise<number | null>((resolve, reject) => { child.once("exit", resolve); child.once("error", reject); });
+    let stdout = "", stderr = "";
+    child.stderr.on("data", (data) => { stderr += data; });
+    child.stdout.on("data", (data) => {
+      stdout += data;
+      if (stdout.includes("\n")) child.stdout.destroy();
+    });
+    const force = setTimeout(() => child.kill("SIGKILL"), 5000);
+    try {
+      assert.equal(await exited, 1, stderr);
+      assert.equal(JSON.parse(stdout.split("\n")[0]).eventId, first.id);
+      assert.equal((await readReceipt(repo, key, first.id))?.status, "delivered");
+      assert.equal(await readReceipt(repo, key, second.id), undefined);
+      const retry = (await run("check", ...args)).stdout.trim().split("\n").map((line) => JSON.parse(line).eventId);
+      assert.deepEqual(retry, [second.id]);
+      assert.equal((await run("check", ...args)).stdout, "");
+    } finally {
+      clearTimeout(force);
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      child.stdout.destroy();
+      await exited;
+    }
+  });
+}
+
 test("interrupting an actual 5000-event GC scan does not strand publish.lock", async (t) => {
   const f = await fixture(t);
   const repo = await repository(f.b);
@@ -153,7 +224,7 @@ test("interrupting an actual 5000-event GC scan does not strand publish.lock", a
     assert.ok(await stat(join(repo.directory, "publish.lock")));
     child.kill("SIGINT");
     const force = setTimeout(() => child.kill("SIGKILL"), 3000);
-    try { assert.equal(await exited, 0, stderr); }
+    try { assert.equal(await exited, 130, stderr); }
     finally { clearTimeout(force); }
     assert.equal(await readJson(join(repo.directory, "publish.lock")), undefined);
     assert.ok((await readdir(join(repo.directory, "events"))).length > 0);

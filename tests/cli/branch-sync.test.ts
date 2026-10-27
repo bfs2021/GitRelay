@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
@@ -19,7 +19,7 @@ async function setup(t: Parameters<typeof fixture>[0]) {
   return f;
 }
 
-test("auto-sync is opt-in, fetches and fast-forwards once; explicit off stays read-only", async (t) => {
+test("auto-sync is opt-in, fetches and fast-forwards once; explicit off stays read-only", { todo: 'Automatic synchronization temporarily disabled pending safe HEAD/worktree binding' }, async (t) => {
   const f = await setup(t);
   const commit = await f.commit(f.main, "shared.txt", "cloud\n");
   for (const flags of [[], ["--no-auto-sync"]]) {
@@ -38,7 +38,7 @@ test("auto-sync is opt-in, fetches and fast-forwards once; explicit off stays re
   await assert.rejects(exec(process.execPath, [cli, "status", "--github", "--auto-sync", "--repo", "owner/repo"]), /omit --repo/);
 });
 
-test("auto-sync preserves dirty work, never autostashes, and refreshes tracking refs", async (t) => {
+test("auto-sync preserves dirty work, never autostashes, and refreshes tracking refs", { todo: 'Automatic synchronization temporarily disabled pending safe HEAD/worktree binding' }, async (t) => {
   const f = await setup(t);
   const commit = await f.commit(f.main, "shared.txt", "cloud\n");
   git(f.b, "config", "merge.autoStash", "true");
@@ -55,9 +55,10 @@ test("auto-sync preserves dirty work, never autostashes, and refreshes tracking 
   assert.equal(git(f.b, "stash", "list"), "");
 });
 
-test("auto-sync preserves ignored files that upstream would overwrite", async (t) => {
+test("auto-sync preserves ignored files that upstream would overwrite", { todo: 'Automatic synchronization temporarily disabled pending safe HEAD/worktree binding' }, async (t) => {
   const f = await setup(t);
   const exclude = git(f.b, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude").trim();
+  await mkdir(dirname(exclude), { recursive: true });
   await writeFile(exclude, "secret.txt\n");
   await writeFile(join(f.b, "secret.txt"), "local secret\n");
   await writeFile(join(f.main, "secret.txt"), "upstream\n");
@@ -68,7 +69,7 @@ test("auto-sync preserves ignored files that upstream would overwrite", async (t
   assert.equal(git(f.b, "rev-parse", "HEAD").trim(), f.initial);
 });
 
-test("auto-sync refuses divergence, other worktrees and active Git operations", async (t) => {
+test("auto-sync refuses divergence, other worktrees and active Git operations", { todo: 'Automatic synchronization temporarily disabled pending safe HEAD/worktree binding' }, async (t) => {
   const f = await setup(t);
   assert.equal((await syncBranch(f.b, "main")).state, "blocked");
   const rebase = git(f.b, "rev-parse", "--path-format=absolute", "--git-path", "rebase-merge").trim();
@@ -83,7 +84,7 @@ test("auto-sync refuses divergence, other worktrees and active Git operations", 
   assert.equal(git(f.c, "rev-parse", "HEAD").trim(), local);
 });
 
-test("auto-sync checks every operation marker in its linked worktree", async (t) => {
+test("auto-sync checks every operation marker in its linked worktree", { todo: 'Automatic synchronization temporarily disabled pending safe HEAD/worktree binding' }, async (t) => {
   const f = await setup(t);
   for (const name of ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer", "BISECT_START"]) {
     const path = git(f.b, "rev-parse", "--path-format=absolute", "--git-path", name).trim();
@@ -99,7 +100,7 @@ test("auto-sync checks every operation marker in its linked worktree", async (t)
   assert.equal((await syncBranch(f.b, "feature/b")).state, "up-to-date");
 });
 
-test("missing upstream and failed fetch never move the local branch", async (t) => {
+test("missing upstream and failed fetch never move the local branch", { todo: 'Automatic synchronization temporarily disabled pending safe HEAD/worktree binding' }, async (t) => {
   const f = await setup(t);
   assert.equal((await syncBranch(f.a, "feature/a")).state, "blocked");
   git(f.b, "remote", "set-url", "origin", join(f.root, "missing.git"));

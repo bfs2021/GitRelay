@@ -2,7 +2,7 @@
 import { parseArgs } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { consumeMailbox } from "../core/consumer.ts";
-import { formatNotifications, listSessions, sendMessage } from "../core/mailbox.ts";
+import { formatNotifications, listSessions, messagePayloadWithinLimit, sendMessage } from "../core/mailbox.ts";
 import { runHook, type HookAgent } from "../adapters/hooks.ts";
 import { joinSession, leaveSession } from "../core/sessions.ts";
 import { collectGarbage } from "../core/cleanup.ts";
@@ -10,19 +10,44 @@ import { runDaemon } from "../core/daemon.ts";
 import { daemonStatus } from "../core/daemon-state.ts";
 import { branchStatus } from "../core/branch-status.ts";
 import { syncBranch } from "../core/branch-sync.ts";
-import { git } from "../core/git.ts";
+import { git, gitRefLine } from "../core/git.ts";
 import { writeFile } from "node:fs/promises";
+import { writeSync } from "node:fs";
 import { formatBranchStatus } from "../core/status-format.ts";
+import { install } from "./install.ts";
+import { chooseFreshRepository, hash, recordRepositoryIdentity, recoverRepositoryInitialization, stateDirectory, withRepositoryIdentity } from "../core/store.ts";
+import { migrateLegacyState } from "../core/identity-migration.ts";
+import { inspectPi } from "./inspect-pi.ts";
+import { join } from "node:path";
 
 const abort = new AbortController();
-const stop = () => { abort.abort(); process.stdin.destroy(); };
-process.once("SIGINT", stop);
-process.once("SIGTERM", stop);
+let stopSignal: "SIGINT" | "SIGTERM" | undefined;
+const stop = (signal: "SIGINT" | "SIGTERM") => { stopSignal ??= signal; abort.abort(); process.stdin.destroy(); };
+const interrupt = () => stop("SIGINT");
+const terminate = () => stop("SIGTERM");
+process.on("SIGINT", interrupt);
+process.on("SIGTERM", terminate);
 
 // A broken or stalled pipe must not bypass lock cleanup or acknowledge undelivered data.
 process.stdout.on("error", () => {});
+let diagnosticBlocked = false;
+process.stderr.on("error", () => { diagnosticBlocked = true; });
+function reportDiagnostic(message: string): void {
+  if (diagnosticBlocked) return;
+  const high = message.charCodeAt(4095), low = message.charCodeAt(4096);
+  const end = high >= 0xd800 && high <= 0xdbff && low >= 0xdc00 && low <= 0xdfff ? 4095 : 4096;
+  const bounded = message.length > 4096 ? `${message.slice(0, end)} [diagnostic truncated]` : message;
+  try {
+    if (!process.stderr.write(`${bounded}\n`)) {
+      diagnosticBlocked = true;
+      process.stderr.once("drain", () => { diagnosticBlocked = false; });
+    }
+  } catch { diagnosticBlocked = true; }
+}
 
 let outputFailed = false;
+let installationCommand = false;
+let longRunningCommand = false;
 async function output(value: object | string): Promise<void> {
   const written = Promise.withResolvers<void>();
   const cancel = () => written.reject(abort.signal.reason);
@@ -55,24 +80,62 @@ async function main() {
       output: { type: "string" },
       ref: { type: "string", default: process.env.WORKTREE_MAIN_REF ?? "refs/heads/main" },
       session: { type: "string" },
+      "repository-id": { type: "string" },
       agent: { type: "string", default: "cli" },
       message: { type: "string" },
+      event: { type: "string" },
       file: { type: "string", multiple: true },
       apply: { type: "boolean" },
       "dry-run": { type: "boolean" },
       "retention-days": { type: "string", default: "7" },
       "interval-ms": { type: "string" },
       help: { type: "boolean", short: "h" },
+      platform: { type: "string", multiple: true },
+      skip: { type: "string", multiple: true },
+      "allow-unverified": { type: "boolean" },
     },
   });
   const [command, agent] = positionals;
+  longRunningCommand = command === "watch" || (command === "daemon" && agent !== "status") || (command === "status" && values.watch === true);
   if (values["branch-status"] && !(command === "hook" && agent === "codex")) throw new Error("--branch-status requires hook codex.");
   if ((values.format || values.output) && command !== "status") throw new Error("--format and --output require status.");
   const days = values["retention-days"].trim() ? Number(values["retention-days"]) : NaN;
   if (values.help || !command) {
-    process.stdout.write("GitRelay (git-relay; worktree-relay and worktree-sync are compatibility aliases)\n\ngit-relay check|watch --session ID [--agent NAME] [--cwd PATH] [--ref refs/heads/main]\ngit-relay send --session ID --agent NAME --message TEXT [--file PATH] [--cwd PATH]\ngit-relay sessions [--cwd PATH]\ngit-relay join|leave --session ID [--agent NAME] [--cwd PATH] [--ref REF]\ngit-relay gc [--cwd PATH] [--apply|--dry-run] [--retention-days 7]\ngit-relay daemon [status] [--interval-ms 5000] [--retention-days 7]\ngit-relay hook claude-code|codex|cursor < hook-input.json\n");
-    process.stdout.write("git-relay status [--branch NAME] [--github [--repo [HOST/]OWNER/REPO]] [--watch] [--auto-sync|--no-auto-sync] [--interval-ms 30000] [--session ID] [--cwd PATH]\n");
-    process.stdout.write("  [--format json|markdown] [--output FILE (single Markdown snapshot)]\ngit-relay hook codex [--branch-status] < hook-input.json\n");
+    longRunningCommand = false;
+    await output("GitRelay (git-relay; worktree-relay and worktree-sync are compatibility aliases)\n\ngit-relay check|watch --session ID [--agent NAME] [--cwd PATH] [--ref refs/heads/main]\ngit-relay send --session ID --agent NAME --message TEXT [--file PATH] [--cwd PATH]\ngit-relay sessions [--cwd PATH]\ngit-relay join|leave --session ID [--agent NAME] [--cwd PATH] [--ref REF]\ngit-relay leave --session ID --cwd MISSING_PATH --repository-id STATE_ID\ngit-relay gc [--cwd PATH] [--apply|--dry-run] [--retention-days 7]\ngit-relay daemon [status] [--interval-ms 5000] [--retention-days 7]\ngit-relay hook claude-code|codex|cursor < hook-input.json\n");
+    await output("git-relay status [--branch NAME] [--github [--repo [HOST/]OWNER/REPO]] [--watch] [--auto-sync|--no-auto-sync] [--interval-ms 30000] [--session ID] [--cwd PATH]\n");
+    await output("  [--format json|markdown] [--output FILE (single Markdown snapshot)]\ngit-relay hook codex [--branch-status] < hook-input.json\n");
+    await output("git-relay install|uninstall [--platform codex|claude-code|pi|opencode] [--skip PLATFORM] [--dry-run] [--allow-unverified]\n");
+    await output("git-relay identity-fresh|identity-migrate|identity-recover --cwd PATH --apply\n");
+    await output("git-relay pi-inspect --session ID --event EVENT_ID [--cwd PATH] [--ref REF]\n");
+    return;
+  }
+  if (values["repository-id"] !== undefined && command !== "leave") throw new Error("--repository-id requires leave.");
+  if (command === "install" || command === "uninstall") {
+    installationCommand = true;
+    if (positionals.length !== 1) throw new Error("Unexpected positional arguments.");
+    if (command === "uninstall" && values["allow-unverified"]) throw new Error("--allow-unverified requires install.");
+    const result = await install(command, values.platform, values.skip, values["dry-run"], values["allow-unverified"], abort.signal);
+    await output(result);
+    if (result.failed) process.exitCode = 1;
+    return;
+  }
+  if (values.platform || values.skip || values["allow-unverified"]) throw new Error("--platform, --skip and --allow-unverified require install or uninstall.");
+  if (values.event && command !== "pi-inspect") throw new Error("--event requires pi-inspect.");
+  if (command === "pi-inspect") {
+    if (positionals.length !== 1 || !values.session || !values.event || values.apply || values["dry-run"]) throw new Error("pi-inspect requires --session and --event and is read-only.");
+    await output(await inspectPi(values.cwd ?? process.cwd(), values.ref, values.session, values.event, abort.signal));
+    return;
+  }
+  if (command === "identity-fresh" || command === "identity-migrate" || command === "identity-recover") {
+    if (positionals.length !== 1 || !values.apply || values["dry-run"]) throw new Error("Identity changes require --apply; inspect the retained prior state first.");
+    const cwd = values.cwd ?? process.cwd();
+    if (command === "identity-fresh") await output(await chooseFreshRepository(cwd, abort.signal));
+    else if (command === "identity-recover") await output(await recoverRepositoryInitialization(cwd, abort.signal));
+    else await output(await withRepositoryIdentity(cwd, abort.signal, async (repo) => {
+      await recordRepositoryIdentity(repo);
+      return migrateLegacyState({ common: repo.common, oldDirectory: join(stateDirectory(), "repos", hash(repo.common)), newDirectory: repo.directory, newId: repo.id, identity: repo.identity, identitySource: repo.identitySource, signal: abort.signal });
+    }));
     return;
   }
   if (command === "status") {
@@ -87,7 +150,7 @@ async function main() {
     if (!Number.isInteger(interval) || interval < (network ? 5000 : 50) || interval > 3_600_000) throw new Error(`interval-ms must be an integer between ${network ? 5000 : 50} and 3600000.`);
     const cwd = values.cwd ?? process.cwd();
     // Pin the authorized sync target so a checkout cannot redirect a running writer.
-    const branch = values.branch ?? (values["auto-sync"] ? (await git(cwd, ["symbolic-ref", "--short", "HEAD"], abort.signal)).trim() : undefined);
+    const branch = values.branch ?? (values["auto-sync"] ? gitRefLine(await git(cwd, ["symbolic-ref", "--short", "HEAD"], abort.signal, "paths")) : undefined);
     let previous: string | undefined;
     do {
       try {
@@ -95,19 +158,41 @@ async function main() {
         const snapshot = { ...await branchStatus({ cwd, branch, github: values.github, repo: values.repo, signal: abort.signal }), ...(sync ? { sync } : {}) };
         const encoded = JSON.stringify(snapshot);
         if (encoded !== previous) {
-          if (previous !== undefined && values.session) {
-            await sendMessage({ cwd, adapter: values.agent, session: values.session, ref: values.ref, text: encoded, signal: abort.signal });
-          }
           const rendered = values.format === "markdown" ? formatBranchStatus(snapshot) : snapshot;
-          if (values.output) await writeFile(values.output, rendered as string, "utf8");
-          await output(rendered);
+          const tooLargeToBroadcast = previous !== undefined && !!values.session && !messagePayloadWithinLimit(encoded, []);
+          const broadcastAttempted = previous !== undefined && !!values.session && !tooLargeToBroadcast;
+          let broadcastFailed = false, broadcastFailure: unknown;
+          const reportBroadcast = (message: string) => reportDiagnostic(`git-relay: ${message}`);
+          if (broadcastAttempted) {
+            try { await sendMessage({ cwd, adapter: values.agent, session: values.session!, ref: values.ref, text: encoded, signal: abort.signal }); }
+            catch (error) {
+              if (abort.signal.aborted) {
+                reportBroadcast("status broadcast was interrupted and may have completed; inspect before retrying.");
+                abort.signal.throwIfAborted();
+              }
+              broadcastFailed = true; broadcastFailure = error;
+            }
+          }
+          try {
+            if (values.output) await writeFile(values.output, rendered as string, "utf8");
+            await output(rendered);
+          } catch (error) {
+            if (tooLargeToBroadcast) reportBroadcast("status snapshot exceeds the 64 KiB message limit and was not broadcast; local output failed.");
+            else if (broadcastAttempted) reportBroadcast("status output failed; the broadcast may have completed. Inspect before retrying.");
+            throw error;
+          }
           previous = encoded;
+          if (tooLargeToBroadcast) reportBroadcast("status snapshot exceeds the 64 KiB message limit and was not broadcast; status was printed locally.");
+          else if (broadcastFailed) {
+            const detail = broadcastFailure instanceof Error ? broadcastFailure.message : String(broadcastFailure);
+            reportBroadcast(`status broadcast failed; it may have completed and this snapshot will not be retried. Inspect before retrying: ${detail.length > 4096 ? `${detail.slice(0, 4096)} [diagnostic truncated]` : detail}`);
+          }
         }
         if (!values.watch && snapshot.github && "error" in snapshot.github) process.exitCode = 1;
         if (!values.watch && (sync?.state === "blocked" || sync?.state === "error")) process.exitCode = 1;
       } catch (error) {
         if (!values.watch || abort.signal.aborted || outputFailed) throw error;
-        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+        reportDiagnostic(error instanceof Error ? error.message : String(error));
       }
       if (!values.watch || abort.signal.aborted) break;
       await delay(interval, undefined, { signal: abort.signal }).catch(() => {});
@@ -127,7 +212,7 @@ async function main() {
     }
     abort.signal.throwIfAborted();
     if (size > 16 * 1024 * 1024) {
-      process.stderr.write("git-relay: Hook input exceeds 16 MiB; skipped without acknowledging events. The next hook can retry.\n");
+      reportDiagnostic("git-relay: Hook input exceeds 16 MiB; skipped without acknowledging events. The next hook can retry.");
       await output({});
       return;
     }
@@ -147,7 +232,7 @@ async function main() {
   }
   if (command !== "daemon" && !values.session) throw new Error("--session ID is required for per-session delivery and deduplication.");
   if (command === "join" || command === "leave") {
-    const options = { cwd: cwd(), ref: values.ref, adapter: values.agent, session: values.session!, signal: abort.signal };
+    const options = { cwd: cwd(), ref: values.ref, adapter: values.agent, session: values.session!, signal: abort.signal, repositoryId: values["repository-id"] };
     const session = command === "join" ? await joinSession(options) : await leaveSession(options);
     await output({ session, left: command === "leave" && session !== undefined });
     return;
@@ -160,6 +245,7 @@ async function main() {
   }
   const check = () => consumeMailbox({
     cwd: cwd(), ref: values.ref, session: values.session!, adapter: values.agent, signal: abort.signal,
+    deliverIndividually: true,
     async deliver(notifications) {
       for (const notification of notifications) {
         const data = notification.kind === "upstream" ? notification.change : notification.event;
@@ -175,7 +261,7 @@ async function main() {
   while (!abort.signal.aborted) {
     try { await check(); } catch (error) {
       if (abort.signal.aborted || outputFailed) throw error;
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      reportDiagnostic(error instanceof Error ? error.message : String(error));
     }
     if (abort.signal.aborted) break;
     await delay(5000, undefined, { signal: abort.signal }).catch(() => {});
@@ -183,12 +269,32 @@ async function main() {
 }
 
 main().catch((error) => {
-  if (abort.signal.aborted && (error === abort.signal.reason || error?.name === "AbortError" || error?.code === "ERR_STREAM_PREMATURE_CLOSE")) return;
-  process.stderr.write(`git-relay: ${error instanceof Error ? error.message : String(error)}\n`);
+  if (abort.signal.aborted && (error === abort.signal.reason || error?.name === "AbortError" || error?.code === "ERR_STREAM_PREMATURE_CLOSE")) {
+    if (installationCommand) {
+      try { writeSync(process.stderr.fd, "git-relay: cancelled; the operation may have completed. Inspect with git-relay uninstall --dry-run.\n"); } catch { /* A closed stderr must not prevent cleanup. */ }
+      process.exitCode = 130;
+    }
+    return;
+  }
+  reportDiagnostic(`git-relay: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
-}).finally(() => {
-  process.removeListener("SIGINT", stop);
-  process.removeListener("SIGTERM", stop);
+}).finally(async () => {
+  process.removeListener("SIGINT", interrupt);
+  process.removeListener("SIGTERM", terminate);
   // Node cannot cancel OS pipe writes; all awaited operation/lock cleanup has now completed.
-  if (abort.signal.aborted) process.exit(process.exitCode ?? 0);
+  if (abort.signal.aborted) {
+    if (!installationCommand && !longRunningCommand) {
+      try { writeSync(process.stderr.fd, "git-relay: interrupted; the operation may have completed. Inspect the result before retrying.\n"); } catch { /* A closed stderr must not prevent cleanup. */ }
+      process.exitCode ??= stopSignal === "SIGTERM" ? 143 : 130;
+    }
+    process.exit(process.exitCode ?? 0);
+  }
+  if (outputFailed || process.stderr.writableLength > 0) {
+    // Give writable stderr a bounded chance to flush without hanging on a full pipe.
+    const flush = new Promise<void>((resolve) => {
+      try { process.stderr.write("", () => resolve()); } catch { resolve(); }
+    });
+    await Promise.race([flush, delay(250)]);
+    process.exit(process.exitCode ?? (outputFailed ? 1 : 0));
+  }
 });

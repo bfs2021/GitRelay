@@ -56,6 +56,7 @@ test("Codex plugin bundles its runtime and runs hooks from an installed path con
   }
   await access(join(installed, "docs/integrations.md"));
   await assert.rejects(access(join(installed, "node_modules")));
+  assert.match(await readFile(join(installed, "dist/vendor/smol-toml/LICENSE"), "utf8"), /Redistribution and use/);
   const hooks = JSON.parse(await readFile(join(installed, plugin.hooks), "utf8"));
   const command = hooks.hooks.SessionStart[0].hooks[0].command;
   assert.ok(!command.includes("auto-sync"));
