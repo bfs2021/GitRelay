@@ -116,6 +116,36 @@ export function validateEvent(value: unknown, id: string): SharedEvent {
   return event;
 }
 
+function orderUpstream(events: SharedEvent[]): SharedEvent[] {
+  const upstream = events.filter((event): event is UpstreamEvent => event.kind === "upstream");
+  const ends = new Map<string, UpstreamEvent[]>();
+  const migration = (event: UpstreamEvent) => event.recipients.length === 1 && event.id === hash(["upstream", event.ref, event.previous, event.commit, `migration:${event.recipients[0]}`]);
+  for (const event of upstream) {
+    const key = JSON.stringify([event.ref, event.commit]);
+    const group = ends.get(key) ?? [];
+    group.push(event);
+    ends.set(key, group);
+  }
+  const parents = new Map(upstream.map((event) => [event.id, migration(event) ? [] :
+    (ends.get(JSON.stringify([event.ref, event.previous])) ?? []).filter((parent) =>
+      parent.id !== event.id && (migration(parent) || event.id === hash(["upstream", event.ref, event.previous, event.commit, parent.id])))]));
+  const state = new Map<string, number>(), ordered: UpstreamEvent[] = [];
+  for (const event of upstream) {
+    const stack: [UpstreamEvent, boolean][] = [[event, false]];
+    while (stack.length) {
+      const [current, done] = stack.pop()!;
+      if (done) { state.set(current.id, 2); ordered.push(current); continue; }
+      if (state.get(current.id) === 2) continue;
+      if (state.get(current.id) === 1) throw new Error("Cyclic upstream event history; unread events were preserved.");
+      state.set(current.id, 1);
+      stack.push([current, true]);
+      for (const parent of [...parents.get(current.id)!].reverse()) stack.push([parent, false]);
+    }
+  }
+  let index = 0;
+  return events.map((event) => event.kind === "upstream" ? ordered[index++] : event);
+}
+
 /** Session-filtered scans require the caller to hold that session's consumption lock. */
 export async function eventsIn(repo: Repository, key?: string, signal?: AbortSignal): Promise<SharedEvent[]> {
   if (key !== undefined && !isId(key)) throw new Error("Invalid receipt key.");
@@ -143,7 +173,8 @@ export async function eventsIn(repo: Repository, key?: string, signal?: AbortSig
     }
   }
   signal?.throwIfAborted();
-  return events.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  events.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  return key === undefined ? events : orderUpstream(events);
 }
 
 export async function readReceipt(repo: Repository, key: string, eventId: string): Promise<{ eventId: string; status: "delivered" | "irrelevant"; at: string } | undefined> {

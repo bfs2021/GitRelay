@@ -7,7 +7,7 @@ import { registerSession, sessionKey, type Notification } from "../../src/core/m
 import { repository, withLock, writeJson } from "../../src/core/store.ts";
 import { fixture } from "../helpers.ts";
 
-test("legacy migration precedes later upstream events", { todo: "Migration publishes its earlier range after later upstream events" }, async (t) => {
+test("legacy migration precedes later upstream events", async (t) => {
   const f = await fixture(t), ref = "refs/heads/main";
   const middle = await f.commit(f.main, "shared.txt", "middle\n");
   const observer = { cwd: f.c, ref, adapter: "test", session: "observer", async deliver() {} };

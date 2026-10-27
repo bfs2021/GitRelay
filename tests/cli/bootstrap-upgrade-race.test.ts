@@ -11,7 +11,6 @@ import { installOpenCode } from "../../src/cli/install-opencode.ts";
 // These exercise generated launchers, not real hosts, and are unverified on Windows.
 for (const platform of ["codex", "opencode"] as const) {
   test(`${platform} launcher tolerates an upgrade between its state and revision reads`, {
-    todo: "The launcher can read stale state across an upgrade",
     skip: process.platform === "win32",
   }, async (t) => {
     const base = await fs.promises.mkdtemp(join(tmpdir(), "gitrelay-bootstrap-race-"));
@@ -41,6 +40,16 @@ for (const platform of ["codex", "opencode"] as const) {
 
     await fs.promises.writeFile(target, marker(1));
     await install();
+    const pointer = join(workspace, `${platform}-current.mjs`);
+    const currentLauncher = await fs.promises.readFile(pointer, "utf8");
+    const legacyLauncher = currentLauncher.replace("const revision = [state.pending, state.current].find((value) => revisions.includes(value));", "const revision = revisions.at(-1);").replace("if (state.removed || !revision", "if (!revision");
+    assert.notEqual(legacyLauncher, currentLauncher);
+    await fs.promises.writeFile(pointer, legacyLauncher);
+    await install();
+    assert.equal(await fs.promises.readFile(pointer, "utf8"), currentLauncher);
+    const archive = (await fs.promises.readdir(workspace)).find((name) => name.startsWith(".git-relay-launcher-"));
+    assert.ok(archive);
+    assert.equal(await fs.promises.readFile(join(workspace, archive, "previous.mjs"), "utf8"), legacyLauncher);
     const stateName = platform === "opencode" ? "opencode.json" : "codex-hooks.json";
     const state = join(workspace, stateName);
     const first = JSON.parse(await fs.promises.readFile(state, "utf8")).current;

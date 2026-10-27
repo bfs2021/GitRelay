@@ -104,14 +104,24 @@ async function consumeMailboxInternal(options: MailboxOptions, individually: boo
       let size = 0;
       const events = await eventsIn(repo, key, signal);
       const cursorPath = join(receipts, "delivery-cursor.json");
-      const cursor = await readJson(cursorPath) as { after?: string } | undefined;
-      if (cursor !== undefined && (!cursor || !isId(cursor.after))) throw new Error(`Invalid delivery cursor: ${cursorPath}`);
-      const start = cursor ? events.findIndex((event) => event.id === cursor.after) + 1 : 0;
+      const cursor = await readJson(cursorPath) as { after?: string; messagesFirst?: boolean } | undefined;
+      if (cursor !== undefined && (!cursor || !isId(cursor.after) || (cursor.messagesFirst !== undefined && typeof cursor.messagesFirst !== "boolean"))) throw new Error(`Invalid delivery cursor: ${cursorPath}`);
+      const messages = events.filter((event) => event.kind === "message");
+      const start = cursor ? messages.findIndex((event) => event.id === cursor.after) + 1 : 0;
+      const rotated = [...messages.slice(start), ...messages.slice(0, start)];
+      const upstream = events.filter((event) => event.kind === "upstream");
+      const ordered: SharedEvent[] = [];
+      for (let i = 0; i < Math.max(rotated.length, upstream.length); i++) {
+        const pair = cursor?.messagesFirst ? [rotated[i], upstream[i]] : [upstream[i], rotated[i]];
+        for (const event of pair) if (event) ordered.push(event);
+      }
       let historyFailure: HistoryUnavailableError | undefined;
-      for (const event of [...events.slice(start), ...events.slice(0, start)]) {
+      let upstreamPending = false;
+      for (const event of ordered) {
         signal?.throwIfAborted();
         if (!event.recipients.includes(key) || (options.upstreamOnly && event.kind !== "upstream")) continue;
         if (event.kind === "upstream" && event.ref !== ref) throw new Error(`Upstream event ${event.id} targets a session subscribed to another ref; preserve state for inspection.`);
+        if (event.kind === "upstream" && upstreamPending) continue;
         const receipt = join(receipts, `${event.id}.json`);
         const delivered = await options.isDelivered?.(event.id, event, { repository: repo, sessionKey: key });
         signal?.throwIfAborted();
@@ -131,7 +141,7 @@ async function consumeMailboxInternal(options: MailboxOptions, individually: boo
         }
         const pending = await options.isPending?.(event.id, event, { repository: repo, sessionKey: key });
         signal?.throwIfAborted();
-        if (pending) continue;
+        if (pending) { if (event.kind === "upstream") upstreamPending = true; continue; }
         if (hasProof) throw unknownProof();
         let notification: Notification | undefined;
         if (event.kind === "upstream" && event.ref === ref) {
@@ -139,7 +149,7 @@ async function consumeMailboxInternal(options: MailboxOptions, individually: boo
           try { change = await inspectChange({ root: repo.root, ref: event.ref, commit: event.previous }, event.commit, signal); }
           catch (error) {
             if (!(error instanceof HistoryUnavailableError)) throw error;
-            if (!options.acknowledgeUnavailableHistory) { historyFailure ??= error; continue; }
+            if (!options.acknowledgeUnavailableHistory) { historyFailure ??= error; upstreamPending = true; continue; }
             change = { root: repo.root, ref: event.ref, commit: event.commit, previous: event.previous, eventId: event.id, rewritten: false, unavailable: true, files: [], commits: [], patch: "" };
           }
           if (change) notification = { kind: "upstream", event, change: { ...change, eventId: event.id } };
@@ -166,16 +176,20 @@ async function consumeMailboxInternal(options: MailboxOptions, individually: boo
       }
       signal?.throwIfAborted();
       // Rotation never acknowledges an event; a crash only changes the next retry's starting point.
-      await writeJson(cursorPath, { after: notifications.at(-1)!.event.id }, signal ? () => signal.throwIfAborted() : undefined);
+      await writeJson(cursorPath, { after: notifications.findLast((item) => item.kind === "message")?.event.id ?? cursor?.after ?? notifications.at(-1)!.event.id, messagesFirst: !cursor?.messagesFirst }, signal ? () => signal.throwIfAborted() : undefined);
+      const attempted: Notification[] = [];
+      let blockedUpstream = false;
       for (const batch of individually ? notifications.map((notification) => [notification]) : [notifications]) {
+        if (individually && blockedUpstream && batch[0].kind === "upstream") continue;
+        attempted.push(...batch);
         const accepted = await options.deliver(batch, { repository: repo, sessionKey: key });
         signal?.throwIfAborted();
         if (accepted !== false) {
           for (const notification of batch) await writeReceipt(join(receipts, `${notification.event.id}.json`), notification.event.id, "delivered");
-        }
+        } else if (batch.some((item) => item.kind === "upstream")) blockedUpstream = true;
       }
       if (historyFailure) throw historyFailure;
-      return notifications;
+      return attempted;
     }, { signal, onAcquired: () => { sessionAcquired = true; } });
   } catch (error) {
     if (error instanceof BusyError && !sessionAcquired) { signal?.throwIfAborted(); return []; }

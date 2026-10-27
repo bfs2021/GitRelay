@@ -1,3 +1,4 @@
+import { publishBootstrap } from "./bootstrap.ts";
 import { randomUUID } from "node:crypto";
 import { cp, link, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
@@ -52,7 +53,8 @@ async function readRecord(path: string): Promise<Record | undefined> {
 
 const digest = (dir: string, signal?: AbortSignal) => installerDigest(dir, [""], "runtime", signal);
 
-const bootstrap = `import { readFile, readdir } from "node:fs/promises";\nconst state = JSON.parse(await readFile(new URL("./opencode.json", import.meta.url), "utf8"));\nconst revisions = (await readdir(new URL("./opencode-revisions/", import.meta.url))).sort();\nconst revision = revisions.at(-1);\nif (!revision || !/^\\d{20}-[a-f0-9]{64}$/.test(revision) || (revision !== state.current && revision !== state.pending)) throw new Error("Invalid GitRelay OpenCode revision");\nexport default (await import(new URL("./runtimes/" + revision.slice(21) + "/dist/adapters/opencode/index.js", import.meta.url).href)).default;\n`;
+const legacyBootstrap = `import { readFile, readdir } from "node:fs/promises";\nconst state = JSON.parse(await readFile(new URL("./opencode.json", import.meta.url), "utf8"));\nconst revisions = (await readdir(new URL("./opencode-revisions/", import.meta.url))).sort();\nconst revision = revisions.at(-1);\nif (!revision || !/^\\d{20}-[a-f0-9]{64}$/.test(revision) || (revision !== state.current && revision !== state.pending)) throw new Error("Invalid GitRelay OpenCode revision");\nexport default (await import(new URL("./runtimes/" + revision.slice(21) + "/dist/adapters/opencode/index.js", import.meta.url).href)).default;\n`;
+const bootstrap = legacyBootstrap.replace("const revision = revisions.at(-1);", "const revision = [state.pending, state.current].find((value) => revisions.includes(value));").replace("if (!revision", "if (state.removed || !revision");
 
 export async function checkWorkspace(root: string): Promise<void> {
   const info = await lstat(root);
@@ -109,7 +111,7 @@ export async function installOpenCode(root: string, config: string, sourceDist: 
     if (record && !record.removed && (await contents(existingAnchor!) !== record.content || (actual !== undefined && !await sameFile(entry, existingAnchor!)))) throw new Error(`OpenCode entry ownership cannot be established; preserved: ${entry}`);
     const pointer = join(root, "opencode-current.mjs");
     const pointerActual = await contents(pointer);
-    if (pointerActual !== undefined && (!record || pointerActual !== bootstrap)) throw new Error(`OpenCode bootstrap was modified; preserved: ${pointer}`);
+    if (pointerActual !== undefined && (!record || (pointerActual !== bootstrap && pointerActual !== legacyBootstrap))) throw new Error(`OpenCode bootstrap was modified; preserved: ${pointer}`);
     const revisions = join(root, "opencode-revisions");
     await mkdir(revisions, { recursive: true });
     const names = (await readdir(revisions)).sort();
@@ -165,13 +167,7 @@ export async function installOpenCode(root: string, config: string, sourceDist: 
     await writeJson(state, next);
     await mkdir(join(config, "opencode", "plugins"), { recursive: true });
     if (latest !== desired) await writeFile(join(revisions, desired), "", { flag: "wx", mode: 0o600 });
-    if (pointerActual === undefined) {
-      const temp = `${pointer}.${randomUUID()}.tmp`;
-      try {
-        await writeFile(temp, bootstrap, { flag: "wx", mode: 0o600 });
-        await link(temp, pointer);
-      } finally { await rm(temp, { force: true }); }
-    }
+    await publishBootstrap(pointer, pointerActual, bootstrap);
     if (actual === undefined) {
       await link(await anchorPath(entry, anchor), entry);
     }

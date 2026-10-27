@@ -1,3 +1,4 @@
+import { publishBootstrap } from "./bootstrap.ts";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, cp, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
@@ -63,7 +64,8 @@ function hookContent(workspace: string, nodePath: string): string {
   return `${JSON.stringify({ hooks: Object.fromEntries(["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"].map((event) => [event, [{ hooks: [{ type: "command", command, timeout: 60 }] }]])) }, null, 2)}\n`;
 }
 
-const bootstrap = `import { readFile, readdir } from "node:fs/promises";\nconst state = JSON.parse(await readFile(new URL("./codex-hooks.json", import.meta.url), "utf8"));\nconst revisions = (await readdir(new URL("./codex-revisions/", import.meta.url))).sort();\nconst revision = revisions.at(-1);\nif (!revision || !/^\\d{20}-[a-f0-9]{64}$/.test(revision) || (revision !== state.current && revision !== state.pending)) throw new Error("Invalid GitRelay Codex revision");\nawait import(new URL("./runtimes/" + revision.slice(21) + "/dist/cli/main.js", import.meta.url));\n`;
+const legacyBootstrap = `import { readFile, readdir } from "node:fs/promises";\nconst state = JSON.parse(await readFile(new URL("./codex-hooks.json", import.meta.url), "utf8"));\nconst revisions = (await readdir(new URL("./codex-revisions/", import.meta.url))).sort();\nconst revision = revisions.at(-1);\nif (!revision || !/^\\d{20}-[a-f0-9]{64}$/.test(revision) || (revision !== state.current && revision !== state.pending)) throw new Error("Invalid GitRelay Codex revision");\nawait import(new URL("./runtimes/" + revision.slice(21) + "/dist/cli/main.js", import.meta.url));\n`;
+const bootstrap = legacyBootstrap.replace("const revision = revisions.at(-1);", "const revision = [state.pending, state.current].find((value) => revisions.includes(value));").replace("if (!revision", "if (state.removed || !revision");
 
 export function validCodexRecord(value: unknown, entry: string, root: string): value is Record {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -112,7 +114,7 @@ export async function installCodex({ workspace, sourceRoot, env = process.env, s
     const oldAnchor = record && !record.removed ? join(home, record.anchor) : undefined;
     if (record && !record.removed && (await contents(oldAnchor!) !== record.content || (actual !== undefined && (actual !== record.content || !await sameFile(entry, oldAnchor!))))) throw new Error(`Codex hooks ownership cannot be established; preserved: ${entry}`);
     const pointer = join(workspace, "codex-current.mjs"), pointerActual = await contents(pointer);
-    if (pointerActual !== undefined && (!record || pointerActual !== bootstrap)) throw new Error(`Codex bootstrap was modified; preserved: ${pointer}`);
+    if (pointerActual !== undefined && (!record || (pointerActual !== bootstrap && pointerActual !== legacyBootstrap))) throw new Error(`Codex bootstrap was modified; preserved: ${pointer}`);
     const revisions = join(workspace, "codex-revisions");
     await mkdir(revisions, { recursive: true });
     const names = (await readdir(revisions)).sort();
@@ -159,11 +161,7 @@ export async function installCodex({ workspace, sourceRoot, env = process.env, s
     }
     await writeJson(state, { entry, content, anchor, nodePath, current: latest ?? null, pending: desired, generation });
     if (latest !== desired) await writeFile(join(revisions, desired), "", { flag: "wx", mode: 0o600 });
-    if (pointerActual === undefined) {
-      const temp = `${pointer}.${randomUUID()}.tmp`;
-      try { await writeFile(temp, bootstrap, { flag: "wx", mode: 0o600 }); await link(temp, pointer); }
-      finally { await rm(temp, { force: true }); }
-    }
+    await publishBootstrap(pointer, pointerActual, bootstrap);
     if (actual === undefined) { await link(join(home, anchor), entry); newlyPublished = true; }
     await writeJson(state, { entry, content, anchor, nodePath, current: desired, generation });
   }, { waitMs: 100, signal });

@@ -167,7 +167,7 @@ test("recovery commits a pending event before notifying about a newer head", asy
   assert.equal(received[1].event.commit, lastCommit);
 });
 
-test("recovery delivers upstream events in chain order after a clock rollback", { todo: "Events are currently sorted by timestamp and ID" }, async (t) => {
+test("recovery delivers upstream events in chain order after a clock rollback", async (t) => {
   const f = await fixture(t);
   await writeFile(join(f.b, "shared.txt"), "local edit");
   const received: Notification[] = [];
