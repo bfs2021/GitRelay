@@ -49,7 +49,7 @@ git-relay check --session "$WORKTREE_SYNC_SESSION" --ref refs/heads/main
 
 The **first check establishes a baseline**, so run it before starting a long task, then again at meaningful checkpoints and before integration. Empty stdout means no event at this check, not proof of compatibility. `watch` waits five seconds after each check and emits NDJSON only when notifications are available; checks themselves take additional time. It requires a host to route events into the current agent conversation; starting it alone does not inject messages.
 
-All adapters share `~/.local/state/worktree-agent-sync` (or `XDG_STATE_HOME` / `WORKTREE_SYNC_STATE_DIR`), partitioned by the real Git common-directory identity. Each session has independent receipts. Use a distinct stable session ID per conversation; use `--agent` to match your native adapter when reading its inbox through CLI. CLI acknowledgements mean successful output, not confirmed model processing.
+All adapters share `~/.local/state/worktree-agent-sync` (or `XDG_STATE_HOME` / `WORKTREE_SYNC_STATE_DIR`), partitioned by the real Git common-directory identity. Each session has independent receipts. Use a distinct stable session ID per conversation; use `--agent` to match your native adapter when reading its inbox through CLI. For pi/OpenCode, also use the exact `--instance` reported by `git-relay sessions` for check/send/join/leave and pi-inspect; omitting it selects a separate legacy identity. Never guess an instance or claim an old inbox for a recreated session. CLI acknowledgements mean successful output, not confirmed model processing.
 
 ## Inspect local and GitHub branch status
 

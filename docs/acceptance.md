@@ -2,6 +2,29 @@
 
 The historical records below preserve the original command names, paths, measurements, and results from before the rename. Translating them does not constitute a new acceptance run.
 
+## Fixed-source lifecycle completion (2026-10-27 UTC)
+
+The latest run tests executable source commit `bc69a5285dfdf685ef62bb75395045e3f5fc68e3` from a `git archive` snapshot. Its tracked source was compared byte-for-byte with that commit after the runs; SHA-256 values for all 108 source/build/vendor/script files are recorded in `acceptance-results.json` under `latestRun`. Later edits update documentation and bundled skill guidance only. Earlier records below remain historical and their unresolved findings must be read with this update.
+
+On macOS arm64 (27.0.1), Node 22.23.2 and Git 2.54.0, the fixed snapshot passed `npm run typecheck`, build, and `npm test`: **647 tests, 631 passed, 0 failed, 0 cancelled, 1 skipped, 15 TODO**. The skip is the Windows-specific Codex installer test; all TODOs concern intentionally disabled automatic synchronization or worktree removal. `npm pack --dry-run --ignore-scripts` also passed. Dependencies were reused from the existing checkout; no fresh `npm ci` was performed for this local run. Hosted CI is separate.
+
+| Real client | Tested entry | Real-model observations |
+| --- | --- | --- |
+| Codex 0.164.0 | Managed user hooks, normal interactive review and trust; no trust bypass | Upstream and explicit markers, a message published during a real `sleep 15` tool, offline resume, stable receipts |
+| Claude Code 2.1.310 | Managed native plugin, isolated user settings | Upstream and explicit markers, real busy tool, offline resume, stable receipts |
+| pi 1.4.0 | Managed extension discovered by the installed runtime bundle, RPC | Idle wake, upstream and explicit markers, real busy tool, same-history offline restart, stable receipts |
+| OpenCode 2.1.2 | Managed v2 plugin, isolated authenticated loopback server | Idle wake, upstream and explicit markers, real busy tool, server restart and offline resume, stable receipts |
+
+All four then loaded a marked test upgrade through their actual native entry, received a fresh marker in a real model response, uninstalled twice, reinstalled the fixed source, and received another fresh marker. Uninstall/reinstall preserved the relay state byte-for-byte; previous receipt bytes and local uncommitted edits remained intact. The upgrade variant changes only `src/core/consumer.ts` and its compiled module to append a test-only load marker. This is **not** acceptance of an upgrade between published releases. Claude skill changes still require the documented migration/reinstall procedure.
+
+A separate real-model Claude Code ↔ pi check sent messages through both clients' actual Bash tools in linked worktrees. Each receiving model quoted the other marker, with two new independent receipts; a different repository sharing the same state root received neither. This verifies one pair in both directions, not all pairwise combinations.
+
+Native identity checks deliberately reused a pi ID in a different native history file and deleted/recreated an OpenCode session using the same ID. Both replacement models responded without receiving the old unread marker, and their instances differed. Pi's original native history then resumed and the model reported its retained marker; OpenCode's old unread event remained unacknowledged. The core regressions additionally cover durable message rotation, oversized-message fairness, causal upstream gating after false/pending callbacks, clock rollback/reset chains, legacy migration order, explicit history-gap acknowledgement, late daemon metadata, and startup interleaved with upgrade.
+
+Evidence remains under `$TMPDIR/gitrelay-final-acceptance-ufn9r0og/`; exact sessions, events, file hashes and outcomes are in `acceptance-results.json`. Earlier unsuccessful auth/configuration and harness attempts are disclosed there and do not count as passes. Nine temporary credential/configuration copies were removed after validation; retained fixture files were scanned for known test credentials. Original user settings and services were not replaced. Pi's installed runtime bundle was invoked directly to avoid its managed launcher's staging cleanup; this does not validate that launcher's cleanup behavior.
+
+Forced termination, power loss, Windows, every client version, and permanent exactly-once model work remain unverified. Automatic branch synchronization and worktree removal remain disabled. Older processes are not protocol-fenced; stop them before the native identity/legacy launcher migration and retain unbound inboxes for review. The existing installer locale-sensitive digest and external destination-directory publication race remain documented in [integrations](integrations.md#automatic-setup).
+
 ## Local regression suite (2026-10-27, Asia/Singapore)
 
 Session validation previously accepted non-string timestamp values that

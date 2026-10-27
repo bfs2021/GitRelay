@@ -30,12 +30,11 @@ removal is also disabled pending an identity-safe implementation.
 | Restart and error recovery | Shared state and receipts implemented; complete real-host failure coverage not established | Same | Queue retries are covered by controlled tests; old pending native entries without a new delivery proof remain unread and require manual review | Same; real-host response-loss and restart windows need further validation |
 | Historical model acceptance | Partial: 0.164.0, isolated user hooks and resumed session | Partial: 2.1.310, settings hooks and resumed session | Partial: 1.4.0, native extension and idle wake | Partial: 2.1.2, v2 plugin and idle wake |
 | Later local model checks on earlier snapshots | Partial: 0.164.0, managed hooks, busy delivery and clean recovery; interactive user-level hook trust also exercised without bypass | Partial: 2.1.310, managed plugin, busy delivery and clean recovery | Partial: 1.4.0, managed extension, real-model message use and restart after an offline message through a buffered test proxy; busy, cross-client and repository isolation remained unverified on that snapshot | Partial: 2.1.2, managed plugin, busy delivery, idle wake and recovery |
+| Latest fixed-source model acceptance (2026-10-27) | 0.164.0: normal interactive trust, upstream/message delivery, busy tool, offline resume, stable receipts | 2.1.310: managed native plugin, upstream/message delivery, busy tool, offline resume, stable receipts | 1.4.0: managed extension, idle wake, upstream/message delivery, busy tool, offline restart, stable receipts | 2.1.2: managed v2 plugin, idle wake, upstream/message delivery, busy tool, offline server restart, stable receipts |
 | Cross-client host checks with local mock models | Received from pi via managed hook; one-time hook-trust bypass and mock HTTP 503 | Sent to OpenCode via the real Bash tool | Sent to Codex via the real Bash tool | Received from Claude via managed plugin |
 | Minimum supported version | Not established | Not established | Not established; 0.78.1 is a necessary API floor | v2 API required; exact minimum not established |
 
-The pi delivery-proof change has local regression coverage. A later real-model
-check covered a limited restart scenario on an earlier source snapshot; full
-real-model acceptance and power-loss durability are not established. Its legacy
+The pi delivery-proof change has local regression coverage and fixed-source real-model idle, busy and clean-restart checks. Forced-termination and power-loss durability are not established. Its legacy
 pending-record limitation and recovery boundary are described in the [pi
 integration guide](integrations.md#pi).
 
@@ -45,17 +44,9 @@ before `--version` returns; its managed launcher can also initiate its own
 staging cleanup. The [setup guidance](integrations.md#automatic-setup) describes
 how to skip pi. Read-only recognition across installation types is not established.
 
-Generated Codex and OpenCode launchers can reject a valid revision when a
-runtime upgrade interleaves with startup. Controlled launcher tests reproduce
-the race; its behavior in real hosts and a compatible migration fix remain
-unverified. Stop affected sessions during upgrades as described in the
-[installation guide](integrations.md#automatic-setup).
+Codex and OpenCode launchers select a retained revision named in the captured installation record, so an interleaved runtime upgrade no longer makes a newer global marker invalidate that snapshot. Controlled regression tests cover this race and owned legacy-launcher replacement. Stop sessions during the first legacy-launcher migration: its short publication gap and already-running old code are not fenced. See the [installation guide](integrations.md#automatic-setup).
 
-The cross-client checks above each used two linked worktrees and a separate
-repository in isolated homes and state roots. They checked one delivery direction
-per pair and limited observations; mock requests and receipts do not establish
-real-model understanding, reverse delivery, crash recovery, or permanent
-deduplication. See the [host-only records](acceptance.md#host-only-identity-checks).
+The latest real-model cross-client run used Claude Code and pi in two linked worktrees, sent both messages through their actual Bash tools, and checked both receiving model responses. A separate repository sharing the state root received neither message. This is one verified pair; all pairwise combinations, forced termination and permanent deduplication are not established. Earlier mock-host checks remain historical evidence only.
 
 OpenCode deletion events cancel checks but do not close or retain a durable
 deletion record for the GitRelay subscription. Reuse of a native session ID and
@@ -84,8 +75,7 @@ repositories use separate state; worktrees of the same repository share events
 with per-session receipts. The previous path-only identity could expose unread
 messages to a replacement repository at the same path. Isolated tests of the new
 persistent identity check that this case requires an explicit state choice and
-does not expose the old event; the latest change has not established full real-agent
-acceptance. See [shared messages](shared-messages.md) for external-identity and
+does not expose the old event; the latest run includes real-model repository separation for the Claude/pi pair, not replacement recovery on every host. See [shared messages](shared-messages.md) for external-identity and
 cleanup boundaries.
 
 Codex and Claude Code hooks are synchronous integration points: they do not
@@ -101,28 +91,13 @@ pending/delivered ID retry behavior reduces duplicate admissions; a local 2.1.2
 test verified the pending case only, and does not establish permanent deduplication
 or completed agent work.
 
-OpenCode `2.1.2` can recreate a deleted native session with the same ID. The
-current adapter reuses the old session identity in that case: an isolated real
-host test confirmed that the replacement can receive the old session's unread
-message. This session-incarnation isolation defect remains unresolved; do not
-reuse deleted IDs when old inbox state may contain messages. See the [host-only
-checks](acceptance.md#host-only-identity-checks).
+Pi binds each inbox to its canonical native history file and creation timestamp; OpenCode binds it to the data root and native creation time. Recreated IDs therefore select separate inboxes. Both reject missing native metadata. Resumes retain their binding; old unbound inboxes remain intact for manual review. Manual CLI access must include the exact `--instance` from `sessions`. Neither native metadata checks nor prompt admission are atomic against unrelated host mutations. See [migration](migration.md#native-session-identity-upgrade).
 
-Pi 1.4.0 also permits deliberate reuse of a session ID in a different session
-directory. The current adapter keys the inbox by ID rather than native file,
-and an isolated RPC test confirmed that the second session can receive the
-first session's unread event. This is unresolved; do not reuse an ID for a
-different file in the same worktree and ref. No natural random-ID collision is
-established. See the [pi integration guidance](integrations.md#pi).
+Upstream publication chains and recognized legacy migration predecessors are consumed in causal order. An unconfirmed upstream range holds its successors, while independent messages rotate through a durable scheduling cursor. Historical unlinked records and existing receipts are not rewritten. Uninspectable history remains unread by default; `check --acknowledge-history-gap --apply` is an explicit operator recovery action.
 
 Official interface references: [Codex hooks](https://developers.openai.com/codex/hooks),
 [Claude Code hooks](https://code.claude.com/docs/en/hooks),
 [pi extensions](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md),
 and [OpenCode v2 plugins](https://opencode.ai/v2/docs/build/plugins/).
 
-The current OpenCode host message ID uses worktree path, native session ID and
-event ID, but not GitRelay repository identity. An isolated real-Git probe
-with a simulated deduplicating host found that matching upstream event IDs in
-two repository identities can produce one simulated admission and two
-`delivered` receipts. Actual OpenCode ID retention across repository
-replacement has not been verified. See the [probe record](acceptance.md#opencode-message-id-across-repository-identities-2026-10-27-asiasingapore).
+OpenCode host message IDs include GitRelay repository identity, the receiving session key (including native instance), and event ID. Controlled regression tests cover repository replacement collisions. Host ID retention still determines the scope of host-level deduplication.

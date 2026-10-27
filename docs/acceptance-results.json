@@ -1,4 +1,703 @@
 {
+  "latestRun": {
+    "testedAtUtc": "2026-10-27T08:09:20.850047+00:00",
+    "environment": {
+      "platform": "macOS arm64",
+      "macOS": "27.0.1",
+      "node": "22.23.2",
+      "git": "2.54.0 (Apple Git-157)"
+    },
+    "source": {
+      "commit": "bc69a5285dfdf685ef62bb75395045e3f5fc68e3",
+      "tree": "d82a07c768814c262b913b5602d0dffbffb9beb9",
+      "trackedSourceMatchesCommit": true,
+      "scope": "Frozen executable source; subsequent commit updates documentation and bundled skill guidance only",
+      "filesSha256": {
+        "src/adapters/claude-code/hooks.json": "83025638482c33b3f7af135bf680fa2f6a6d9030d688c82b38bb26b3e686c5ef",
+        "src/adapters/codex/hooks.json": "54037c4320c11d57a77f5b8289328d00ee7949bc4b012171b09074c7436a4f53",
+        "src/adapters/codex/plugin-hooks.json": "bb896105f67d5e086a97e7961b4731b7902470495170a72120bea66e5d187aed",
+        "src/adapters/cursor/hooks.json": "0d4e6ee634199e283bff9a5d2d6b9047ccbcc70fd218598837ed85adb55d98fc",
+        "src/adapters/hooks.ts": "ab1a098b006cf331ec26e1cc8d240589692a743de9d3cd03c1358fbe52618b1b",
+        "src/adapters/opencode/index.ts": "6b909b2d69f816779b01aadfb3b4acbb08d9e94c40625193e6b92d86f27b7a43",
+        "src/adapters/pi/identity.ts": "871a50eda4914c8844c22d2a626ae22d272d3a4fd13ba373b85bc2303c10266a",
+        "src/adapters/pi/index.ts": "bf9d791965f3c6b52ed38d757646b2b5f7d8b05c4859e5ede9119064d695ef1e",
+        "src/adapters/pi/watch.ts": "b323b5e23c45fa181550f8c687c1b009667b9353d3939df6d0e0518754a16d68",
+        "src/cli/bootstrap.ts": "b221f08ba52d953778f03a606b9050b460e76c82711e21757da74eff56f7e2e3",
+        "src/cli/codex-config.ts": "812f76c8163f11c0df45a63bc7a57a172974dcdd372657b9beeef6f701e147e2",
+        "src/cli/command-output.ts": "a06100aab65a06b439b3ef89516a82e98901f87720b119f3f07975a238d94dcf",
+        "src/cli/inspect-pi.ts": "a641079d9f8fc8f2e616dd614d72f62bd1cdf6f6b920c8d18a5eff3f9c95f39a",
+        "src/cli/install-claude.ts": "ec1e474743fdb56d6b4605122bcbacd0d7a60dce1b9f8ad89ac2220ada884f87",
+        "src/cli/install-codex.ts": "29693a595cf2a270d8500d0e226684d571e59e63de137a85c7e64ca07106d39a",
+        "src/cli/install-opencode.ts": "06374eab782edda9c208a78f26a708692330e09a9c12fae1f7084ece3a408c57",
+        "src/cli/install-pi.ts": "a5922d1620e7081df2a970e215163f682d17d853116f1a105c93c70de4ad0498",
+        "src/cli/install-record.ts": "2f1d00e434c476cbd43b79e1b45f845b7f14e615ff0baf3276b23651321db019",
+        "src/cli/install.ts": "f19425f51c113e6245ca26e38142992b35afc55dae0e19dfa05c99f7d9dfd554",
+        "src/cli/installer-digest.ts": "475380f2fd21fcb85e4137ca7b06c0ec1165ed4f490653d3681321ff98102ecb",
+        "src/cli/main.ts": "f4c9dfa083517cd31014f68c152d48e4b9d1dafb88cd980b2e908fee835cea33",
+        "src/cli/platform-detection.ts": "60b4bcd25d6938f8cad912b9605f94f6b7ad9dca88f6c79f370686af1ffecbc4",
+        "src/core/branch-status.ts": "b6c219cfb3ca50f12fe16b6c6b79dae97d3bfa523695190bb0890e4ccd583664",
+        "src/core/branch-sync.ts": "dc30594e7b843daa689257d704f007225d28b90f2e1e7484af196b3d37d3fcc3",
+        "src/core/changes.ts": "bfb0cf1aa508a4c1fec750b9c54edd96926bd061f06a2f611374a606ff7c1565",
+        "src/core/cleanup.ts": "4eb4174a89266c6f1e09c75b72e212511dcf0dd801ba7fe92ae1d72951ba149a",
+        "src/core/consumer.ts": "27ed47a1f1cd272cb77b8673114e90853c18e0d25212ff70737cee44c11b1fab",
+        "src/core/daemon-state.ts": "70868ee710d5164308d19df2836023dc53779747c983270986c8488f8bdd6eb7",
+        "src/core/daemon.ts": "3012a72c87eea5f1f77cd5cb046db56f3372646a772123d004015715687058e2",
+        "src/core/git.ts": "f15ec32505957b14560f36a47e7bc64a9f70db30f7b14f9a9807f056bd7c0854",
+        "src/core/identity-migration.ts": "7cb23798a62d53abbd2372b0f93230a8497288761ba561fcc886b6d1f98fdf46",
+        "src/core/mailbox.ts": "115af79af7f778201d9e7e17d5146153c77ecc82de5f5f154cb39faaab8b3b81",
+        "src/core/publisher.ts": "66b14805ce1f5a0d71d814816c02a31f1ecf016ea5993bd9448318673a228c3b",
+        "src/core/sessions.ts": "43dcb484e7415be69bb8ac750134f162401ef7b5edab046ed049cc5e692ba017",
+        "src/core/status-format.ts": "261ca52ed141500051698e44c1ec0f1fe7935b12027c424a15954bffa4495f92",
+        "src/core/store.ts": "524ac90e3d3d8a2b190586f4fae3824225c4c4ad605cb98313af6c2e6a08704a",
+        "dist/adapters/hooks.js": "ade13b24d76b9e73b93c3a415b6f9879e4ed5a04d08e1062c3b82099f5ec83ca",
+        "dist/adapters/opencode/index.js": "341758b5069021b36704802ddedccd89a4f1cbf270bd47482f6442a0da014f90",
+        "dist/adapters/pi/identity.js": "0f83202680170d5fc4d184ddcae5c532c8fd8e75d76f837b6dcc335c327771b9",
+        "dist/adapters/pi/index.js": "efbcec6546e91039e26086253322ba51b78809a3f29b998187e8cca17f3c0a83",
+        "dist/adapters/pi/watch.js": "f111cb00f9480992d110ae18f0e15b980d026c90a05d818b91af8156889e85ef",
+        "dist/cli/bootstrap.js": "12928609aea565f564283e3c7329598a476b3d35e0fa719676cfd1f655f43dba",
+        "dist/cli/codex-config.js": "87de94a8ed918510fcc2187a7c9d8e2ba43d03e1b778a0a88b9c5d78df9edc3a",
+        "dist/cli/command-output.js": "e3d5194ea1bffeed5e93010b0bd067174566dfc810cc5d305e28a2344c3ca521",
+        "dist/cli/inspect-pi.js": "04ee537573be731489f776c8dee8e5374483463026a15b2c94228666be758ec0",
+        "dist/cli/install-claude.js": "831742919a97617b51d6f6f35f8a59c0bf392645fdebd7e23650023fbea01c92",
+        "dist/cli/install-codex.js": "62e0756477a759c6885981cd6dd8bf64aff8a1cddc9ef491ff59edce869c670e",
+        "dist/cli/install-opencode.js": "abf296eb970720f109ed3d07426d0a732446f26f1a24b7aa97e16252e2934a9a",
+        "dist/cli/install-pi.js": "cc2dc7a360b00a9f0ae4ac9fa4871f104475ba5aac8ca37729a3acae1be00ca9",
+        "dist/cli/install-record.js": "82c7d3e658a3322f793f8aa0424d90ed5d9cdc8473c8c9a8d0cb1c5662c3cdf4",
+        "dist/cli/install.js": "50e47080e497568d01459cd5d892d1a56572837abc00927badbd652a5fee1322",
+        "dist/cli/installer-digest.js": "dd651f6fafc2ebdfdd71ceda803ca6dfa7d1cc0a836704c558d16202c071dc08",
+        "dist/cli/main.js": "eb5ab47313ab64a5f5a9d5654ddd64700e421dd98459600cf6f78a0756e95bb8",
+        "dist/cli/platform-detection.js": "e97cf4669b69025a24ab7659c35cdb15775f64a0cbf5912a7ab916fab61c7c78",
+        "dist/core/branch-status.js": "3dda1758c87bbb94f05e7e4e63da5f38c5158e92ac5eeafc55f0d4ee94cf8a7d",
+        "dist/core/branch-sync.js": "d8c3861344ed9c41a0d540b6b3f11961f0dc982d9292a842e192b689483a8719",
+        "dist/core/changes.js": "14d54577560e8b62feb47c2337b743364feba8e123b15aea187c76a360dc156c",
+        "dist/core/cleanup.js": "b344e070a9290e7d77c7039badfd3fe3f9096c533958be81d34a900c06480548",
+        "dist/core/consumer.js": "32230fe8fd0ef0ef8fece9b61caa4e708dbb1dba330f48111fec53d72a280727",
+        "dist/core/daemon-state.js": "43ace4c6bed035798f7417f1a52f0c090c5042a8a2735c9c413d749f13450457",
+        "dist/core/daemon.js": "48203c1e0242644035a4636b597620cc4096454ef00bf4fb214f959f69f6e968",
+        "dist/core/git.js": "3218ab0ed4418d849f481b88c9cecd69105b3e63c88b398898b6382541cb0fbc",
+        "dist/core/identity-migration.js": "fbce2b278fc59e3639df32b7615bcb3a76a4641dde951f44bb039eb6aea090db",
+        "dist/core/mailbox.js": "64061858c9df64b1a0feedab0c016141dc862f6b6ac6702dffee56226513b606",
+        "dist/core/publisher.js": "75a98311d3176f900d8cec37a5b14297aac75279ebca1dc4b732a3d049a98a51",
+        "dist/core/sessions.js": "9aa64b19620f0dce5e2a37db222517844beaadfd00a6c92eb0a4d19de7ac9c94",
+        "dist/core/status-format.js": "4ecda152309f4c0ddfa03a37d62c3c6a9e004f16006e456f0669e8ffc1ffdc83",
+        "dist/core/store.js": "752fce587bb855d5b546db23b0d1f3e0e1f74593a9b4c487e1aad450a7abf56b",
+        "dist/vendor/smol-toml/LICENSE": "fa5659948374d4f555594f47f6da073b40dc503e921aeeece30df4362b3051a5",
+        "dist/vendor/smol-toml/date.js": "ef924a2a42c7f16761e7098c3ed8e04195ecbcb02d5c369db0aee76f251a409c",
+        "dist/vendor/smol-toml/error.js": "76f8e47f5fc57273748242d59570656d7c921a80bceb2291ca5a4d7a723e9f29",
+        "dist/vendor/smol-toml/extract.js": "3e6f1e5764a091acf2df6a3f257d0467c37a2b9dbfecab1573f17a6489349c90",
+        "dist/vendor/smol-toml/index.js": "dc8e0afc74477e514f5cb8492b587560c1d7d68cec03a994cc8bc4af99c8da2a",
+        "dist/vendor/smol-toml/parse.js": "195e33ea068bf6f3acb5b3342792ac4aa954bba7e751519ba869c00da395ecdb",
+        "dist/vendor/smol-toml/primitive.js": "be47fe90bf9a410af0b9204b6b34617f4b38e57f08198b10cb024a0272eb5936",
+        "dist/vendor/smol-toml/stringify.js": "c717d95456426dc8a0b07c9d03a4e434d5dea8254fca24e5fd93a22de3bcd44c",
+        "dist/vendor/smol-toml/struct.js": "736742cfa645bbd08bc5396c5f7ddbea5c3b7ac5d61fe86031846f5769131deb",
+        "dist/vendor/smol-toml/util.js": "6327e40efd957128da15867c3a32293950a925570b457b1b78c735452cebc08e",
+        "vendor/smol-toml/LICENSE": "fa5659948374d4f555594f47f6da073b40dc503e921aeeece30df4362b3051a5",
+        "vendor/smol-toml/UPSTREAM.md": "9941b34771e5ef7f988f085b098533ba34d55b0d0a4d28b1fb39e174d5b3aee2",
+        "vendor/smol-toml/date.d.ts": "c7ad3531c131f2b5b246b2d208b75c5403475ad155b7661fa2d673104b806791",
+        "vendor/smol-toml/date.js": "ef924a2a42c7f16761e7098c3ed8e04195ecbcb02d5c369db0aee76f251a409c",
+        "vendor/smol-toml/error.d.ts": "02e33cdc5ca75f517f44b31070640be0fe6d0169dd91c266d02a1e2a71e064ac",
+        "vendor/smol-toml/error.js": "76f8e47f5fc57273748242d59570656d7c921a80bceb2291ca5a4d7a723e9f29",
+        "vendor/smol-toml/extract.js": "3e6f1e5764a091acf2df6a3f257d0467c37a2b9dbfecab1573f17a6489349c90",
+        "vendor/smol-toml/index.d.ts": "b4556819c2ed0cd4016d05a6bfd7d4773c0b5ffb39c8ed547796ce4a1093d9b8",
+        "vendor/smol-toml/index.js": "dc8e0afc74477e514f5cb8492b587560c1d7d68cec03a994cc8bc4af99c8da2a",
+        "vendor/smol-toml/parse.d.ts": "2b230dc984b6e51b545bfe222f9965cc2ff434164ed9428bec415c5e508a9854",
+        "vendor/smol-toml/parse.js": "195e33ea068bf6f3acb5b3342792ac4aa954bba7e751519ba869c00da395ecdb",
+        "vendor/smol-toml/primitive.js": "be47fe90bf9a410af0b9204b6b34617f4b38e57f08198b10cb024a0272eb5936",
+        "vendor/smol-toml/stringify.d.ts": "628a6a55714fcf4a4eb0e59866ab1e5cc67c1b9e0cfc8524ccc8d6b5ee24ad7c",
+        "vendor/smol-toml/stringify.js": "c717d95456426dc8a0b07c9d03a4e434d5dea8254fca24e5fd93a22de3bcd44c",
+        "vendor/smol-toml/struct.js": "736742cfa645bbd08bc5396c5f7ddbea5c3b7ac5d61fe86031846f5769131deb",
+        "vendor/smol-toml/util.d.ts": "e6b1d3eecb240dc71d0dc28d1beee69cefd6ee014507c822909be0a7117517e0",
+        "vendor/smol-toml/util.js": "6327e40efd957128da15867c3a32293950a925570b457b1b78c735452cebc08e",
+        "scripts/benchmark-concurrency.mjs": "545fe78ba686a24a59efe39b7fc3cc9f3a4117c00d600a7a03d1fe4ccee98c85",
+        "scripts/benchmark-darwin-io.c": "35de93366e8d8730333ed1a72c906a9504fa5e87f4f46b9c77d1b5e46d442b84",
+        "scripts/benchmark-darwin-io.mjs": "886697410650615a741e6de071df4faabf7924d342648e552f56bcbc20dbd137",
+        "scripts/benchmark-delivery.mjs": "c7af54980de2715b33cef4eea63cc79915090976285034f73f5522b71fb27c8a",
+        "scripts/benchmark-history.mjs": "f95cf777b29384f97d901a4751e297ea09a54130005856c2414c3c1cc4316b87",
+        "scripts/benchmark-maintenance.mjs": "da79716e84244db5f5db29b418f21b7b6b60450e880e638a5ad477a6df781f3b",
+        "scripts/benchmark-pi-history.mjs": "194c102ea1f88e639d96c25bed1cdec56298da8509cb95593c4e26f2e4fe27f1",
+        "scripts/benchmark-pi-large-history.mjs": "c146f0c0b05bc07082a8c57119c19245eeb26625d5a4924489e90eba00a96fbc",
+        "scripts/benchmark-sync.mjs": "e1bc769172349dbe5dc72e4068e6030fa488f060f059b232445d7e4eb2ddae32",
+        "scripts/benchmark-worktree.mjs": "a5d7bbcc48d9a60c3f3f8287dcb7364a1d8e902838b40534c62b5f824807e080",
+        "scripts/benchmark.mjs": "ec7547669fd8bada3a02dbce698b94d3cc2b4352b0c6f1f928fd0b68e3ca8bd0",
+        "scripts/build-codex-plugin.mjs": "9597f0185f13b8c2ff04737523055268608249585c586887006bb8286d9becb1",
+        "scripts/build.mjs": "10872ca5665f50c98205eb2bf1be52f3e6502c4ea8cc4e74f5189eb95358139c"
+      }
+    },
+    "localChecks": {
+      "npmTest": {
+        "tests": 647,
+        "pass": 631,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 1,
+        "todo": 15,
+        "skipReason": "Windows-specific Codex installer test on macOS",
+        "todoReason": "Intentionally disabled automatic synchronization and worktree removal"
+      },
+      "typecheck": "passed",
+      "build": "passed",
+      "npmPackDryRun": "passed",
+      "freshNpmCi": false
+    },
+    "clients": [
+      {
+        "client": "codex",
+        "sourceCommit": "bc69a5285dfdf685ef62bb75395045e3f5fc68e3",
+        "session": "01a17c5d-7438-7bf0-9a0e-aa1f70606bcd",
+        "upstream": "UPSTREAM_bfd213e86fc2401980ec395c0b88cdc7",
+        "relay": "RELAY_c0745ffda9d34ca7a56431d006f5d93c",
+        "event": "5626bf3968323e0386ec41ba922ecc86848a5e0d1db99628b4a99667984ebf26",
+        "receipts": 4,
+        "markersInAssistant": true,
+        "normalInteractiveTrust": true,
+        "cleanResume": true,
+        "deduplicated": true,
+        "localEditsPreserved": true,
+        "passed": true,
+        "busyTool": true,
+        "busyEvent": "4432a078951abc97d0ec44e514d48873328877f385569a23988c44f35ac7e87d",
+        "busyMarker": "RELAY_BUSY_452d0c7a7b154f489dc6e7c795abbef4",
+        "startToPublishSeconds": 0.06974945800000043,
+        "cleanRestart": true,
+        "offlineEvent": "101c9282b94e9b626c8ca8619fc6d352c38aa974738927d77a7f5e907a39ca13",
+        "offlineMarker": "RELAY_OFFLINE_5f3a1f74cba842a6b6823044f3c2d40f",
+        "lifecyclePassed": true,
+        "version": "0.164.0",
+        "model": "gpt-6.1-sol",
+        "installation": {
+          "client": "codex",
+          "sourceCommit": "bc69a5285dfdf685ef62bb75395045e3f5fc68e3",
+          "upgradeKind": "instrumented test variant, not published release",
+          "passed": true,
+          "testUpgradeLoaded": true,
+          "upgradeModelDelivery": true,
+          "uninstallPreservedState": true,
+          "repeatUninstall": true,
+          "reinstallModelDelivery": true,
+          "oldReceiptsStable": true,
+          "localEditsPreserved": true,
+          "upgradeResult": {
+            "workspace": "/private/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-final-acceptance-ufn9r0og/codex/data/git-relay",
+            "results": [
+              {
+                "platform": "codex",
+                "status": "pending-trust",
+                "version": "0.164.0",
+                "previouslyTested": true,
+                "action": "Review and trust the hooks through /hooks in Codex."
+              },
+              {
+                "platform": "claude-code",
+                "status": "skipped"
+              },
+              {
+                "platform": "pi",
+                "status": "skipped"
+              },
+              {
+                "platform": "opencode",
+                "status": "skipped"
+              }
+            ],
+            "failed": false
+          },
+          "uninstallResult": {
+            "workspace": "/private/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-final-acceptance-ufn9r0og/codex/data/git-relay",
+            "results": [
+              {
+                "platform": "codex",
+                "status": "removed",
+                "archive": "/private/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-final-acceptance-ufn9r0og/codex/home/.codex/.git-relay-codex-removed-ye03Fg/hooks.json"
+              },
+              {
+                "platform": "claude-code",
+                "status": "skipped"
+              },
+              {
+                "platform": "pi",
+                "status": "skipped"
+              },
+              {
+                "platform": "opencode",
+                "status": "skipped"
+              }
+            ],
+            "failed": false
+          },
+          "reinstallResult": {
+            "workspace": "/private/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-final-acceptance-ufn9r0og/codex/data/git-relay",
+            "results": [
+              {
+                "platform": "codex",
+                "status": "pending-trust",
+                "version": "0.164.0",
+                "previouslyTested": true,
+                "action": "Review and trust the hooks through /hooks in Codex."
+              },
+              {
+                "platform": "claude-code",
+                "status": "skipped"
+              },
+              {
+                "platform": "pi",
+                "status": "skipped"
+              },
+              {
+                "platform": "opencode",
+                "status": "skipped"
+              }
+            ],
+            "failed": false
+          },
+          "events": [
+            "7f0ca27c7dbac45b8a8519ccb28e508d6a822f9cd5bd2fb94c21a712e9f2d94a",
+            "2b4d515b768a9a9a1d6cc3f792c85b76c88bc526446656c1a49e80ebb99a267f"
+          ],
+          "receipts": 6
+        }
+      },
+      {
+        "client": "claude-code",
+        "sourceCommit": "bc69a5285dfdf685ef62bb75395045e3f5fc68e3",
+        "session": "1a16fb35-7e67-43c1-9135-d6764794ddb8",
+        "upstream": "UPSTREAM_2e9ff9765fdc4085ba5fbbba89416138",
+        "relay": "RELAY_63c31550c5214e079ead9ca8b34190a5",
+        "event": "077a417599e345de152dfbccd1a5a1499cbf2c4a03990614f5a44908d814541c",
+        "receipts": 4,
+        "markersInAssistant": true,
+        "cleanResume": true,
+        "deduplicated": true,
+        "localEditsPreserved": true,
+        "passed": true,
+        "busyTool": true,
+        "busyEvent": "4296dface6112c06c5c6f93ec589f3d54b88965f790590a4f0b971666025ac7d",
+        "busyMarker": "RELAY_BUSY_915c64e0a8da403585445d327340e3c1",
+        "startToPublishSeconds": 0.07227033400000016,
+        "cleanRestart": true,
+        "offlineEvent": "0d2adf87869102957a9ee045f9ca989ebcc75f6d200ba7e46d2b43f7ed245888",
+        "offlineMarker": "RELAY_OFFLINE_a7e355372697403196670a15d19ec60b",
+        "lifecyclePassed": true,
+        "version": "2.1.310",
+        "model": "deepseek-v4.1-flash",
+        "installation": {
+          "client": "claude-code",
+          "sourceCommit": "bc69a5285dfdf685ef62bb75395045e3f5fc68e3",
+          "upgradeKind": "instrumented test variant, not published release",
+          "passed": true,
+          "testUpgradeLoaded": true,
+          "upgradeModelDelivery": true,
+          "uninstallPreservedState": true,
+          "repeatUninstall": true,
+          "reinstallModelDelivery": true,
+          "oldReceiptsStable": true,
+          "localEditsPreserved": true,
+          "upgradeResult": {
+            "workspace": "/private/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-final-acceptance-ufn9r0og/claude-code/data/git-relay",
+            "results": [
+              {
+                "platform": "codex",
+                "status": "skipped"
+              },
+              {
+                "platform": "claude-code",
+                "status": "configured",
+                "version": "2.1.310",
+                "previouslyTested": true,
+                "id": "git-relay@git-relay-d2de0a1f-4c2b-4d63-9f62-231515baff61"
+              },
+              {
+                "platform": "pi",
+                "status": "skipped"
+              },
+              {
+                "platform": "opencode",
+                "status": "skipped"
+              }
+            ],
+            "failed": false
+          },
+          "uninstallResult": {
+            "workspace": "/private/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-final-acceptance-ufn9r0og/claude-code/data/git-relay",
+            "results": [
+              {
+                "platform": "codex",
+                "status": "skipped"
+              },
+              {
+                "platform": "claude-code",
+                "status": "removed",
+                "retainedMarketplace": true
+              },
+              {
+                "platform": "pi",
+                "status": "skipped"
+              },
+              {
+                "platform": "opencode",
+                "status": "skipped"
+              }
+            ],
+            "failed": false
+          },
+          "reinstallResult": {
+            "workspace": "/private/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-final-acceptance-ufn9r0og/claude-code/data/git-relay",
+            "results": [
+              {
+                "platform": "codex",
+                "status": "skipped"
+              },
+              {
+                "platform": "claude-code",
+                "status": "configured",
+                "version": "2.1.310",
+                "previouslyTested": true,
+                "id": "git-relay@git-relay-d2de0a1f-4c2b-4d63-9f62-231515baff61"
+              },
+              {
+                "platform": "pi",
+                "status": "skipped"
+              },
+              {
+                "platform": "opencode",
+                "status": "skipped"
+              }
+            ],
+            "failed": false
+          },
+          "events": [
+            "58851f6fac54cfaa0d9d3ebd920624e3ef646b0745b6a27fe986a2c95249ed41",
+            "c8f0c62bc13bb761f7fb8a539adcbee3c7d9687ef3b75994967501e175106384"
+          ],
+          "receipts": 6
+        }
+      },
+      {
+        "client": "pi",
+        "sourceCommit": "bc69a5285dfdf685ef62bb75395045e3f5fc68e3",
+        "session": "accept-dd8840e3-d271-48b2-96ea-fcb357c7a98a",
+        "instance": "f99865645e37b42d2643860e10a0f307dc3cf09ce221570f90f4b92f91a9cc2c",
+        "upstream": "UPSTREAM_8b36ce57fb3f41348de1155ec8810fc2",
+        "relay": "RELAY_23bfcf9c16c44810912bffb951f86381",
+        "event": "6873e5834c92ad8646b9ea4336710e32909741f7417711fc1090cddcfd5fac31",
+        "receipts": 4,
+        "markersInAssistant": true,
+        "idleWake": true,
+        "cleanRestart": true,
+        "offlineEvent": "919bb82f224c1a393a612c3e2f3ab5a6c2db4397f32c7d88ad9ae93e895142ad",
+        "deduplicated": true,
+        "localEditsPreserved": true,
+        "passed": true,
+        "busyTool": true,
+        "busyEvent": "99ec8b795e7491e722e315f6b15566c4c62c292bd46f5938b2b8b635f5f07767",
+        "busyMarker": "RELAY_BUSY_67924fe926334509a531a140d7d30800",
+        "startToPublishSeconds": 0.0745384579999997,
+        "toolSeconds": 15.010915207999998,
+        "lifecyclePassed": true,
+        "version": "1.4.0",
+        "model": "amr-link/deepseek-v4.1-flash",
+        "installation": {
+          "client": "pi",
+          "sourceCommit": "bc69a5285dfdf685ef62bb75395045e3f5fc68e3",
+          "upgradeKind": "instrumented test variant, not published release",
+          "passed": true,
+          "testUpgradeLoaded": true,
+          "upgradeModelDelivery": true,
+          "uninstallPreservedState": true,
+          "repeatUninstall": true,
+          "reinstallModelDelivery": true,
+          "oldReceiptsStable": true,
+          "localEditsPreserved": true,
+          "upgradeResult": {
+            "workspace": "/private/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-final-acceptance-ufn9r0og/pi/data/git-relay",
+            "results": [
+              {
+                "platform": "codex",
+                "status": "skipped"
+              },
+              {
+                "platform": "claude-code",
+                "status": "skipped"
+              },
+              {
+                "platform": "pi",
+                "status": "configured",
+                "version": "1.4.0",
+                "previouslyTested": true
+              },
+              {
+                "platform": "opencode",
+                "status": "skipped"
+              }
+            ],
+            "failed": false
+          },
+          "uninstallResult": {
+            "workspace": "/private/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-final-acceptance-ufn9r0og/pi/data/git-relay",
+            "results": [
+              {
+                "platform": "codex",
+                "status": "skipped"
+              },
+              {
+                "platform": "claude-code",
+                "status": "skipped"
+              },
+              {
+                "platform": "pi",
+                "status": "removed"
+              },
+              {
+                "platform": "opencode",
+                "status": "skipped"
+              }
+            ],
+            "failed": false
+          },
+          "reinstallResult": {
+            "workspace": "/private/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-final-acceptance-ufn9r0og/pi/data/git-relay",
+            "results": [
+              {
+                "platform": "codex",
+                "status": "skipped"
+              },
+              {
+                "platform": "claude-code",
+                "status": "skipped"
+              },
+              {
+                "platform": "pi",
+                "status": "configured",
+                "version": "1.4.0",
+                "previouslyTested": true
+              },
+              {
+                "platform": "opencode",
+                "status": "skipped"
+              }
+            ],
+            "failed": false
+          },
+          "events": [
+            "6a8def1846f4afd29c62bc7cd8618dfdb0add93f71cf176b2432d8d64c79034b",
+            "140f312c43c7107411defe9d43b8b75c78335dc9b08cff793df284eba7eab331"
+          ],
+          "receipts": 12
+        }
+      },
+      {
+        "client": "opencode",
+        "sourceCommit": "bc69a5285dfdf685ef62bb75395045e3f5fc68e3",
+        "session": "ses_e83a5cb4effeLlm7pJ76VpkUDJ",
+        "instance": "b8dd57973b9075d7dcdf7a487677b68aae8dc0289ef842d6f29cf64934b27e33",
+        "upstream": "UPSTREAM_96fd3658e56a42198df59204fd91ef54",
+        "relay": "RELAY_57bb56f340514746bb68d3b7a38eef76",
+        "event": "82a78f6c1fafcab9b9c04d84367001a1b3f588778227542304e0201c44503ad2",
+        "receipts": 4,
+        "markersInAssistant": true,
+        "idleWake": true,
+        "deduplicated": true,
+        "localEditsPreserved": true,
+        "passed": true,
+        "cleanRestart": true,
+        "offlineEvent": "d2938649f318965f74213eb334b77d9473b2a2b56b739767c945d348a5942bf6",
+        "offlineMarker": "RELAY_OFFLINE_0aacec793d284c1193d70e09e383e27d",
+        "busyTool": true,
+        "busyEvent": "c9aaf4abad5b71e8e773dba811f53941a803718cb7bfa8bef6497d06fb547507",
+        "busyMarker": "RELAY_BUSY_38aa4b5841934ed5b7176bed85d0535d",
+        "startToPublishSeconds": 0.07047366599999982,
+        "lifecyclePassed": true,
+        "version": "2.1.2",
+        "model": "amr/deepseek-v4.1-flash",
+        "installation": {
+          "client": "opencode",
+          "sourceCommit": "bc69a5285dfdf685ef62bb75395045e3f5fc68e3",
+          "upgradeKind": "instrumented test variant, not published release",
+          "passed": true,
+          "testUpgradeLoaded": true,
+          "upgradeModelDelivery": true,
+          "uninstallPreservedState": true,
+          "repeatUninstall": true,
+          "reinstallModelDelivery": true,
+          "oldReceiptsStable": true,
+          "localEditsPreserved": true,
+          "upgradeResult": {
+            "workspace": "/private/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-final-acceptance-ufn9r0og/opencode/data/git-relay",
+            "results": [
+              {
+                "platform": "codex",
+                "status": "skipped"
+              },
+              {
+                "platform": "claude-code",
+                "status": "skipped"
+              },
+              {
+                "platform": "pi",
+                "status": "skipped"
+              },
+              {
+                "platform": "opencode",
+                "status": "configured",
+                "version": "2.1.2",
+                "previouslyTested": true
+              }
+            ],
+            "failed": false
+          },
+          "uninstallResult": {
+            "workspace": "/private/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-final-acceptance-ufn9r0og/opencode/data/git-relay",
+            "results": [
+              {
+                "platform": "codex",
+                "status": "skipped"
+              },
+              {
+                "platform": "claude-code",
+                "status": "skipped"
+              },
+              {
+                "platform": "pi",
+                "status": "skipped"
+              },
+              {
+                "platform": "opencode",
+                "status": "removed",
+                "archive": "/private/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-final-acceptance-ufn9r0og/opencode/config/opencode/plugins/.git-relay-removed-80RV7f/entry"
+              }
+            ],
+            "failed": false
+          },
+          "reinstallResult": {
+            "workspace": "/private/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-final-acceptance-ufn9r0og/opencode/data/git-relay",
+            "results": [
+              {
+                "platform": "codex",
+                "status": "skipped"
+              },
+              {
+                "platform": "claude-code",
+                "status": "skipped"
+              },
+              {
+                "platform": "pi",
+                "status": "skipped"
+              },
+              {
+                "platform": "opencode",
+                "status": "configured",
+                "version": "2.1.2",
+                "previouslyTested": true
+              }
+            ],
+            "failed": false
+          },
+          "events": [
+            "4a208dba7b8d00908b9c5e6bcb8ea463c825f761850b18d4800818333064d16a",
+            "c60bbe9085bc2eb09a89959f6462580e42974d66a6026f10307a6c8163750126"
+          ],
+          "receipts": 6
+        }
+      }
+    ],
+    "realModelCrossClient": {
+      "sourceCommit": "bc69a5285dfdf685ef62bb75395045e3f5fc68e3",
+      "passed": true,
+      "claudeToPi": true,
+      "piToClaude": true,
+      "realSenderTools": true,
+      "repositoryIsolation": true,
+      "localEditsPreserved": true,
+      "claudeSession": "89c695d0-422c-423e-9788-99274a303685",
+      "piSession": "accept-dd8840e3-d271-48b2-96ea-fcb357c7a98a",
+      "piInstance": "f99865645e37b42d2643860e10a0f307dc3cf09ce221570f90f4b92f91a9cc2c",
+      "markers": [
+        "RELAY_CROSS_CLAUDE_8a93c5c74dc84dc492946ee8d8ae0246",
+        "RELAY_CROSS_PI_e6b5f7e5b18540e4968cc178e54fbd53"
+      ],
+      "newReceipts": 2
+    },
+    "nativeIdReuse": {
+      "pi": {
+        "sourceCommit": "bc69a5285dfdf685ef62bb75395045e3f5fc68e3",
+        "session": "accept-dd8840e3-d271-48b2-96ea-fcb357c7a98a",
+        "passed": true,
+        "originalInstance": "f99865645e37b42d2643860e10a0f307dc3cf09ce221570f90f4b92f91a9cc2c",
+        "replacementInstance": "1ca4486188f8308202da73062f558638cf88e55ee107b3b893a936b6fd49ba9a",
+        "event": "98c6546ff432d2f8f9ebc219a61bd8c81aed868982eab56e1f3289d547b690b2",
+        "replacementDidNotReceive": true,
+        "originalReceivedOnResume": true,
+        "modelResponded": true
+      },
+      "opencode": {
+        "sourceCommit": "bc69a5285dfdf685ef62bb75395045e3f5fc68e3",
+        "oldSession": "ses_e83a5cb4effeLlm7pJ76VpkUDJ",
+        "passed": true,
+        "session": "ses_e839d7c7fffeQ8aFBznnJPg3ls",
+        "originalInstance": "d93e6f1338deed7000983ab95d498a00188b027524b1d316d77e12a2334dfe0d",
+        "replacementInstance": "b2497783a2575ae4aff1904107134ddacacfc038d49c91842099931c91956722",
+        "event": "819d2842ccbbb53e9bd5605f481050d179d15dd3616be131b1dd42c9461ffa25",
+        "unreadPreserved": true,
+        "replacementDidNotReceive": true,
+        "modelResponded": true
+      }
+    },
+    "instrumentedUpgrade": {
+      "description": "Fixed source plus one module-load marker; not an upgrade between published releases",
+      "changedFilesSha256": {
+        "src/core/consumer.ts": "36423aad78a090e86f4561bcd55e1e99c75a470d3c57f90e7d8ee93e10cf921b",
+        "dist/core/consumer.js": "9d79426dd7fee319f02b39fd4e0772470ae344dc9f2866fb22717b25d05f12ac"
+      }
+    },
+    "evidence": {
+      "directory": "/private/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-final-acceptance-ufn9r0og",
+      "temporaryFilesMayBeRemovedByOS": true,
+      "scripts": [
+        "/tmp/gitrelay-platform-install.py",
+        "/tmp/gitrelay-real-model-check.py",
+        "/tmp/gitrelay-lifecycle-final.py",
+        "/tmp/gitrelay-cross-final.py",
+        "/tmp/gitrelay-pi-identity-final.py",
+        "/tmp/gitrelay-opencode-identity-final.py",
+        "/tmp/gitrelay-install-lifecycle-final.py"
+      ],
+      "credentialsRemoved": [
+        "codex/home/.codex/auth.json",
+        "codex/env.json",
+        "claude-code/env.json",
+        "pi/pi-agent/auth.json",
+        "pi/env.json",
+        "pi/pi-agent/models.json",
+        "opencode/config/opencode/opencode.json",
+        "opencode/config/opencode/amr-api-key",
+        "opencode/env.json"
+      ],
+      "retainedEvidenceScannedForKnownCredentials": true
+    },
+    "attemptNotes": [
+      "Initial Pi OAuth refresh failed; completed tests use an already configured custom provider with real model responses.",
+      "OpenCode file-reference credentials did not resolve under isolated HOME; a temporary private provider configuration enabled real responses.",
+      "Initial Codex native inspection exceeded the 60-second bound; isolated --no-daemon succeeded. Hooks were then trusted through normal interactive review, without bypass.",
+      "Earlier retry fixtures retained intentionally offline subscriptions, and one harness version read the wrong state directory. Only corrected final runs count.",
+      "Pi identity retry reused a deliberately closed replacement file, and the model initially followed a prior marker-prefix instruction. A fresh replacement directory and explicit synthetic-data prompt completed the check.",
+      "A Pi upgrade harness initially stopped before the next receipt confirmation poll. Waiting for confirmation before stopping completed the lifecycle check without source changes."
+    ],
+    "notEstablished": [
+      "Remote CI at this local evidence snapshot",
+      "Windows and every supported host version",
+      "Forced termination, power loss, permanent exactly-once model work",
+      "Every pairwise cross-client combination; current real-model pair is Claude Code and pi",
+      "Published-release-to-release upgrade; upgrade here uses a marked test variant",
+      "Managed Pi launcher staging cleanup behavior; tests invoke its installed 1.4.0 runtime bundle directly",
+      "Mixed-version state sharing, automatic migration of legacy unbound inboxes, automatic deleted-session retirement",
+      "Performance improvements; no new performance comparison was run"
+    ],
+    "remainingConstraints": [
+      "Automatic branch synchronization and worktree removal remain disabled.",
+      "Stop old participants for the first launcher/native identity migration; legacy launcher replacement has a short publication gap.",
+      "Native history checks and host admission cannot be atomic with unrelated external mutation.",
+      "Existing installer locale-sensitive digests and external destination-directory publication race remain documented in integrations.md."
+    ]
+  },
   "environment": {
     "platform": "macOS arm64",
     "node": "22.23.2",

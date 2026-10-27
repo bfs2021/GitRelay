@@ -90,6 +90,12 @@ This preserves prior state but does not import its unread messages, receipts, or
 
 Historical acceptance paths, package names, hashes, and measurements remain in [acceptance](acceptance.md) and [performance](performance.md). They are evidence from those runs, not newly executed checks.
 
+## Native session identity upgrade
+
+Stop and upgrade all participants before reopening shared state. Pi now binds its inbox to the canonical native history file and header creation timestamp; OpenCode binds its inbox to the data root and native creation time. A resumed history retains its instance; a newly created history gets a separate inbox even if its native ID is reused. Missing or invalid native identity metadata is rejected.
+
+Older inboxes without an `instance` remain intact and are not automatically claimed. Inspect `git-relay sessions --cwd /absolute/worktree` and preserve unread events and native histories before retiring an old registration. Manual `check`, `send`, `join`, `leave`, and `pi-inspect` targeting a bound identity require its exact `--instance`. Omitting it selects a separate legacy identity. Moving a pi history to another file or changing the OpenCode data root creates a new binding. There is no automatic transfer of old receipts or unread messages, and older processes are not fenced by a protocol version.
+
 ## History-gap recovery
 
 Earlier versions could acknowledge an upstream history-gap notification when
@@ -97,9 +103,7 @@ Git returned a missing-object error. Git can return the same status, or even a
 successful `missing` probe, when existing object storage is inaccessible. The
 current receiver therefore preserves the unread event whenever it cannot compare
 the commits, rather than automatically confirming an ambiguous history gap.
-This compatibility change can block later notifications in that session; a
-safe explicit history-gap acknowledgement flow is not yet implemented.
-Previously written receipts remain unchanged.
+Later upstream notifications wait for this range; independent messages can still progress. Previously written receipts remain unchanged.
 
 1. Stop the affected session and other GitRelay participants using this state;
    preserve a backup of the repository and its GitRelay state. The error reports
@@ -114,7 +118,14 @@ Previously written receipts remain unchanged.
    normal delivery and receipt handling resume. Do not delete the event, forge
    a receipt, or claim it was delivered merely to clear the error. If trusted
    history cannot be recovered, preserve the state for manual investigation;
-   there is currently no supported automatic skip.
+   an explicit acknowledgement is available only after that review:
+
+   ```sh
+   git-relay check --cwd /absolute/worktree --agent AGENT --session SESSION_ID \
+     --acknowledge-history-gap --apply
+   ```
+
+   Include the exact `--instance` shown by `git-relay sessions` for pi/OpenCode. This accepts every selected uninspectable upstream range for that inbox, emits `unavailable: true`, and writes receipts only after successful output. It does not recover a diff or prove the agent assessed it. Spawn errors, cancellation and timeouts remain errors; ordinary hooks and polling never opt in.
 
 ## Temporary worktree removal change
 

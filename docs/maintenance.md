@@ -117,33 +117,9 @@ For a matching event left in `trash/` by an earlier version, recovery moves it b
 
 A session's inbox scan can skip an event it has already confirmed, but ref synchronization must still inspect the event: its receipt does not establish whether a damaged payload was an upstream publication whose cursor was never saved. Consequently, a previously confirmed but damaged message can block a consumer during ref synchronization. Earlier versions could skip that payload for the confirming session. Preserve the event, receipts, and cursor and restore a trusted copy before retrying; do not delete the record merely to unblock the scan.
 
-Inbox delivery is ordered by event timestamp and ID, not by upstream commit chain. If the system clock moves backward between a pending A→B publication and the subsequent B→C publication, a session that has read neither can receive B→C first. An isolated clock-mocked reproduction is recorded as a failing TODO in `tests/core/cleanup.test.ts`; it verifies that both events are present and shows the ordering limitation, not message loss or duplicate delivery. Chain-ordered delivery remains unresolved.
+Per-session inbox scans order retained upstream events by the publisher's hash-linked chain and recognized legacy migration predecessors. Clock rollback and a reset such as A→B→A→C do not reorder those linked publications. An unconfirmed or `isPending` upstream event prevents later upstream callbacks and receipts. Unlinked historical events retain their stable timestamp/ID order; existing receipts are not rewritten, and collected predecessors cannot be reconstructed.
 
-A separate migration ordering defect can occur without a clock rollback: an
-already registered but unmigrated session with legacy cursor A may be included
-in a normal B→C publication before its own first check creates the migration
-event A→B. It can then receive B→C before A→B. The isolated Git reproduction
-is a failing TODO in `tests/core/legacy-migration-order.test.ts`. Keep the
-legacy cursor, events and receipts for investigation; simply upgrading the
-participants does not repair already disordered events. A future fix must also
-account for older clients publishing to shared state, because there is no
-protocol-enforced version gate.
-
-In the public individually-delivered consumer API, a `deliver` callback that
-returns `false` for one upstream event does not stop a later upstream event
-from being delivered and acknowledged first. An isolated Git reproduction is
-recorded in `/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-order-review-c2wbybaw/test.mts`.
-This behavior is unresolved; the reproduction does not establish that the
-current four platform adapters trigger that particular callback outcome.
-The same core-level reproduction also shows a later upstream delivery can pass
-an earlier event reported by `isPending`. Pi uses that callback, but this test
-did not reproduce the timing through a real pi host.
-
-The public individually-delivered API can also starve later notifications if
-the first eight notifications repeatedly return `false`: those unacknowledged
-items keep filling the scan window. A single oversized first item can have the
-same effect. This is a core-level failure-mode finding, not an assertion that
-the current CLI or OpenCode callbacks return `false` in normal operation.
+Explicit messages rotate through a durable per-inbox `delivery-cursor.json` and alternate with upstream candidates. Repeated `false` callbacks or one oversized notification therefore do not keep independent messages behind the same first scan window. The cursor schedules retries; it is never a delivery receipt. An unreadable upstream comparison retains that event and its successors, while independent messages can still be delivered before the comparison error is reported. Corrupt state and Git execution failures can still stop the whole scan. See [history-gap recovery](migration.md#history-gap-recovery) for explicit acknowledgement when trusted history cannot be restored.
 
 Upgrade and reload **all** participating CLIs, daemons, plugins, and hooks before resuming shared state. Older versions can publish or collect events without the current recovery checks; a new participant cannot make their operations safe. There is no protocol-enforced version gate or atomic journal that makes mixed-version operation safe, and no migration command that certifies older processes have stopped. Keep backups of the existing state until the upgrade and recovery are verified.
 
