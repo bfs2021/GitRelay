@@ -177,10 +177,24 @@ for (const command of ["check", "watch"]) {
     const second = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: `second record ${"x".repeat(59_000)}` });
     await writeJson(join(repo.directory, "events", `${first.id}.json`), { ...first, createdAt: "2026-01-01T00:00:01.000Z" });
     await writeJson(join(repo.directory, "events", `${second.id}.json`), { ...second, createdAt: "2026-01-01T00:00:02.000Z" });
-    const child = spawn(process.execPath, [cli, command, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+    // Wait for the reader to close before the second write; OS pipe capacity is not fixed.
+    const script = `
+      const write = process.stdout.write.bind(process.stdout);
+      let writes = 0;
+      process.stdout.write = (...args) => {
+        if (++writes !== 2) return write(...args);
+        process.stdin.once("data", () => write(...args));
+        return false;
+      };
+      process.argv = ${JSON.stringify([process.execPath, command, ...args])};
+      await import(${JSON.stringify(pathToFileURL(cli).href)});
+    `;
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", script], { stdio: ["pipe", "pipe", "pipe"] });
     const exited = new Promise<number | null>((resolve, reject) => { child.once("exit", resolve); child.once("error", reject); });
     let stdout = "", stderr = "";
     child.stderr.on("data", (data) => { stderr += data; });
+    child.stdin.on("error", () => {});
+    child.stdout.once("close", () => child.stdin.end("reader closed\n"));
     child.stdout.on("data", (data) => {
       stdout += data;
       if (stdout.includes("\n")) child.stdout.destroy();

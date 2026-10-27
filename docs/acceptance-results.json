@@ -11,7 +11,7 @@
       "commit": "bc69a5285dfdf685ef62bb75395045e3f5fc68e3",
       "tree": "d82a07c768814c262b913b5602d0dffbffb9beb9",
       "trackedSourceMatchesCommit": true,
-      "scope": "Frozen executable source; subsequent commit updates documentation and bundled skill guidance only",
+      "scope": "Frozen executable source; later commits update documentation, bundled skill guidance and test synchronization only",
       "filesSha256": {
         "src/adapters/claude-code/hooks.json": "83025638482c33b3f7af135bf680fa2f6a6d9030d688c82b38bb26b3e686c5ef",
         "src/adapters/codex/hooks.json": "54037c4320c11d57a77f5b8289328d00ee7949bc4b012171b09074c7436a4f53",
@@ -696,7 +696,20 @@
       "Stop old participants for the first launcher/native identity migration; legacy launcher replacement has a short publication gap.",
       "Native history checks and host admission cannot be atomic with unrelated external mutation.",
       "Existing installer locale-sensitive digests and external destination-directory publication race remain documented in integrations.md."
-    ]
+    ],
+    "ciFollowUp": {
+      "initialRun": "https://github.com/shenyankm/GitRelay/actions/runs/40471742421",
+      "initialOutcome": "Ubuntu Node 22.19 passed; Node 24 exposed one closed-pipe fixture scheduling race; fail-fast cancelled both macOS jobs",
+      "fix": "Gate the second stdout write until the parent has closed the real read pipe; production output code is unchanged",
+      "localTypecheck": "passed",
+      "localResilienceTests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0,
+        "cancelled": 0
+      },
+      "nextHostedRun": "Triggered by the follow-up commit; report hosted result separately"
+    }
   },
   "environment": {
     "platform": "macOS arm64",
