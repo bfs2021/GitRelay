@@ -4,7 +4,7 @@ import { lstat, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { eventsIn, sendMessage, sessionKey } from "../../src/core/mailbox.ts";
+import { eventsIn, sendMessage, sessionKey, validateEvent } from "../../src/core/mailbox.ts";
 import { hash, stateDirectory } from "../../src/core/store.ts";
 
 async function fixture(t: { after(fn: () => void | Promise<void>): void }) {
@@ -31,6 +31,36 @@ test("sparse file inputs fail before repository state is created", async (t) => 
     sendMessage({ cwd: f.root, adapter: "test", session: "s", text: "hello", files: Array(1) }),
     /Message files must be repository-relative/,
   );
+  await assert.rejects(lstat(join(f.common, ".git-relay-id")), { code: "ENOENT" });
+});
+
+test("cross-platform path restrictions apply to both sends and retained events", async (t) => {
+  const f = await fixture(t),
+    names = ["\\notes.txt", "C:notes.txt", "dir\\..\\inside.txt"];
+  if (process.platform !== "win32") for (const name of names) await writeFile(join(f.root, name), "file");
+  for (const name of names) {
+    await assert.rejects(
+      sendMessage({ cwd: f.root, adapter: "test", session: "s", text: "hello", files: [name] }),
+      /Message files must be repository-relative/,
+    );
+    const id = "a".repeat(64);
+    assert.throws(
+      () =>
+        validateEvent(
+          {
+            id,
+            kind: "message",
+            createdAt: new Date().toISOString(),
+            recipients: [],
+            sender: { root: f.root, adapter: "test", session: "s" },
+            text: "hello",
+            files: [name],
+          },
+          id,
+        ),
+      /Message files must be repository-relative/,
+    );
+  }
   await assert.rejects(lstat(join(f.common, ".git-relay-id")), { code: "ENOENT" });
 });
 
