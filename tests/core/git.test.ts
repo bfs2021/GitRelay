@@ -16,16 +16,33 @@ async function fixture(t: { after(fn: () => Promise<void>): void }) {
   const repo = join(root, "repo");
   await mkdir(repo);
   git(repo, "init", "-b", "main");
-  git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "initial");
+  git(
+    repo,
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.com",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "initial",
+  );
   return { root, repo };
 }
 
 test("NUL parser preserves unusual paths and worktree metadata", () => {
-  assert.deepEqual(parseWorktrees("worktree /tmp/a\n b\0HEAD abc123\0branch refs/heads/feature/a\0locked reason\0\0worktree /tmp/detached\0HEAD def456\0detached\0prunable missing directory\0\0worktree /tmp/bare\0bare\0\0"), [
-    { path: "/tmp/a\n b", head: "abc123", branch: "feature/a", locked: "reason" },
-    { path: "/tmp/detached", head: "def456", detached: true, prunable: "missing directory" },
-    { path: "/tmp/bare", bare: true },
-  ]);
+  assert.deepEqual(
+    parseWorktrees(
+      "worktree /tmp/a\n b\0HEAD abc123\0branch refs/heads/feature/a\0locked reason\0\0worktree /tmp/detached\0HEAD def456\0detached\0prunable missing directory\0\0worktree /tmp/bare\0bare\0\0",
+    ),
+    [
+      { path: "/tmp/a\n b", head: "abc123", branch: "feature/a", locked: "reason" },
+      { path: "/tmp/detached", head: "def456", detached: true, prunable: "missing directory" },
+      { path: "/tmp/bare", bare: true },
+    ],
+  );
   assert.equal(parseWorktrees("worktree /x\0locked\0\0")[0].locked, "");
 });
 
@@ -85,10 +102,25 @@ test("ambiguous tag/branch start points require a qualified ref", async (t) => {
   const { repo, root } = await fixture(t);
   const initial = git(repo, "rev-parse", "HEAD").trim();
   git(repo, "tag", "dup");
-  git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "new");
+  git(
+    repo,
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.com",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "new",
+  );
   const newer = git(repo, "rev-parse", "HEAD").trim();
   git(repo, "branch", "dup");
-  await assert.rejects(addWorktree(repo, join(root, "ambiguous"), "feature/ambiguous", true, "dup"), /matches both.*full ref/);
+  await assert.rejects(
+    addWorktree(repo, join(root, "ambiguous"), "feature/ambiguous", true, "dup"),
+    /matches both.*full ref/,
+  );
   const fromBranch = await addWorktree(repo, join(root, "branch"), "feature/branch", true, "refs/heads/dup");
   const fromTag = await addWorktree(repo, join(root, "tag"), "feature/tag", true, "refs/tags/dup");
   assert.equal(git(fromBranch, "rev-parse", "HEAD").trim(), newer);

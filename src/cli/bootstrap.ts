@@ -15,14 +15,30 @@ export async function publishBootstrap(path: string, expected: string | undefine
       archived = join(directory, "previous.mjs");
       await rename(path, archived);
       const moved = await lstat(archived);
-      if (!moved.isFile() || moved.dev !== before.dev || moved.ino !== before.ino || moved.size !== Buffer.byteLength(expected) || await readFile(archived, "utf8") !== expected) throw new Error("Launcher changed during migration");
+      if (
+        !moved.isFile() ||
+        moved.dev !== before.dev ||
+        moved.ino !== before.ino ||
+        moved.size !== Buffer.byteLength(expected) ||
+        (await readFile(archived, "utf8")) !== expected
+      )
+        throw new Error("Launcher changed during migration");
     }
     await link(temporary, path);
   } catch (cause) {
     if (archived) {
-      try { await link(archived, path); } catch { /* Preserve a concurrent replacement and the archive. */ }
-      throw new Error("GitRelay launcher migration did not complete; inspect " + path + " and preserved archive " + archived, { cause });
+      try {
+        await link(archived, path);
+      } catch {
+        /* Preserve a concurrent replacement and the archive. */
+      }
+      throw new Error(
+        "GitRelay launcher migration did not complete; inspect " + path + " and preserved archive " + archived,
+        { cause },
+      );
     }
     throw cause;
-  } finally { await rm(temporary, { force: true }); }
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }

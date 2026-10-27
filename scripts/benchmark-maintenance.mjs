@@ -10,7 +10,8 @@ import { hash, repository } from "../dist/core/store.js";
 const temporary = await mkdtemp(join(tmpdir(), "git-relay-maintenance-bench-"));
 const previousState = process.env.WORKTREE_SYNC_STATE_DIR;
 process.env.WORKTREE_SYNC_STATE_DIR = join(temporary, "state");
-const git = (...args) => execFileSync("git", ["-C", temporary, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+const git = (...args) =>
+  execFileSync("git", ["-C", temporary, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 const json = (path, value) => writeFile(path, JSON.stringify(value));
 const measure = async (run) => {
   const samples = [];
@@ -26,23 +27,50 @@ try {
   const repo = await repository(temporary);
   const at = new Date().toISOString();
   const keys = [];
-  console.log(JSON.stringify({ node: process.version, git: git("--version"), samples: 3, recipients: 3, workload: "session discovery and retained-event GC; setup excluded; warm filesystem cache" }));
+  console.log(
+    JSON.stringify({
+      node: process.version,
+      git: git("--version"),
+      samples: 3,
+      recipients: 3,
+      workload: "session discovery and retained-event GC; setup excluded; warm filesystem cache",
+    }),
+  );
   for (const count of [100, 1000]) {
     while (keys.length < count) {
       const identity = { adapter: "benchmark", session: `session-${keys.length}` };
       const key = sessionKey(repo, identity, "refs/heads/main");
-      await json(join(repo.directory, "sessions", `${key}.json`), { ...identity, key, root: repo.root, ref: "refs/heads/main", createdAt: at, lastSeen: at, migrated: true });
+      await json(join(repo.directory, "sessions", `${key}.json`), {
+        ...identity,
+        key,
+        root: repo.root,
+        ref: "refs/heads/main",
+        createdAt: at,
+        lastSeen: at,
+        migrated: true,
+      });
       keys.push(key);
     }
-    const sessionScanMs = await measure(async () => assert.deepEqual((await sessionsIn(repo)).map((session) => session.key).sort(), [...keys].sort()));
+    const sessionScanMs = await measure(async () =>
+      assert.deepEqual((await sessionsIn(repo)).map((session) => session.key).sort(), [...keys].sort()),
+    );
     const recipients = keys.slice(0, 3);
     for (const key of recipients) await mkdir(join(repo.directory, "receipts", key), { recursive: true });
     const ids = [];
     for (let i = 0; i < count; i++) {
       const id = hash(["maintenance-benchmark", i]);
       ids.push(id);
-      await json(join(repo.directory, "events", `${id}.json`), { id, kind: "message", createdAt: at, sender: { adapter: "benchmark", session: "sender", root: repo.root }, recipients, text: "benchmark", files: [] });
-      for (const key of recipients) await json(join(repo.directory, "receipts", key, `${id}.json`), { eventId: id, status: "delivered", at });
+      await json(join(repo.directory, "events", `${id}.json`), {
+        id,
+        kind: "message",
+        createdAt: at,
+        sender: { adapter: "benchmark", session: "sender", root: repo.root },
+        recipients,
+        text: "benchmark",
+        files: [],
+      });
+      for (const key of recipients)
+        await json(join(repo.directory, "receipts", key, `${id}.json`), { eventId: id, status: "delivered", at });
     }
     const retainedGcMs = await measure(async () => {
       const report = await collectRepository(repo, { apply: true });
@@ -56,7 +84,11 @@ try {
     assert.deepEqual(report.kept, [{ id: ids[0], reason: "unconfirmed" }]);
     assert.deepEqual(report.removed.sort(), ids.slice(1).sort());
     assert.deepEqual(await readdir(join(repo.directory, "events")), [`${ids[0]}.json`]);
-    await json(join(repo.directory, "receipts", recipients[0], `${ids[0]}.json`), { eventId: ids[0], status: "delivered", at });
+    await json(join(repo.directory, "receipts", recipients[0], `${ids[0]}.json`), {
+      eventId: ids[0],
+      status: "delivered",
+      at,
+    });
     assert.deepEqual((await collectRepository(repo, { apply: true, retentionDays: 0 })).removed, [ids[0]]);
     assert.deepEqual(await readdir(join(repo.directory, "events")), []);
     assert.deepEqual(await readdir(join(repo.directory, "trash")), []);

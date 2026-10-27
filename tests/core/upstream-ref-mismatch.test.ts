@@ -10,8 +10,10 @@ import { fixture } from "../helpers.ts";
 
 test("upstream events cannot acknowledge a recipient subscribed to another ref", async (t) => {
   const f = await fixture(t);
-  const ref = "refs/heads/main", actor = { adapter: "test", session: "receiver" };
-  const previous = f.initial, commit = await f.commit(f.main, "shared.txt", "upstream\n");
+  const ref = "refs/heads/main",
+    actor = { adapter: "test", session: "receiver" };
+  const previous = f.initial,
+    commit = await f.commit(f.main, "shared.txt", "upstream\n");
   await writeFile(join(f.b, "shared.txt"), "local\n");
   const base = process.env.WORKTREE_SYNC_STATE_DIR!;
   await consumeMailbox({ cwd: f.b, ref, ...actor, async deliver() {} });
@@ -27,8 +29,14 @@ test("upstream events cannot acknowledge a recipient subscribed to another ref",
     const directory = join(state, "repos", repoId!);
     const repo = { directory } as Repository;
     const event: UpstreamEvent = {
-      id: randomBytes(32).toString("hex"), kind: "upstream", ref: "refs/heads/other", previous, commit,
-      recipients: [key], sender: { ...actor, root: f.b }, createdAt: new Date().toISOString(),
+      id: randomBytes(32).toString("hex"),
+      kind: "upstream",
+      ref: "refs/heads/other",
+      previous,
+      commit,
+      recipients: [key],
+      sender: { ...actor, root: f.b },
+      createdAt: new Date().toISOString(),
     };
     await run(repo, event);
   }
@@ -40,11 +48,29 @@ test("upstream events cannot acknowledge a recipient subscribed to another ref",
       const before = await readFile(path, "utf8");
       let calls = 0;
       const options: MailboxOptions = {
-        cwd: f.b, ref, ...actor,
-        async deliver() { calls++; },
+        cwd: f.b,
+        ref,
+        ...actor,
+        async deliver() {
+          calls++;
+        },
         ...(mode === "upstreamOnly" ? { upstreamOnly: true } : {}),
-        ...(mode === "isDelivered" ? { isDelivered() { calls++; return true; } } : {}),
-        ...(mode === "isPending" ? { isPending() { calls++; return true; } } : {}),
+        ...(mode === "isDelivered"
+          ? {
+              isDelivered() {
+                calls++;
+                return true;
+              },
+            }
+          : {}),
+        ...(mode === "isPending"
+          ? {
+              isPending() {
+                calls++;
+                return true;
+              },
+            }
+          : {}),
       };
       await assert.rejects(consumeMailbox(options), /session subscribed to another ref/);
       assert.equal(calls, 0);
@@ -59,7 +85,17 @@ test("upstream events cannot acknowledge a recipient subscribed to another ref",
       const path = join(repo.directory, "receipts", key, `${event.id}.json`);
       await writeJson(path, { eventId: event.id, status, at: new Date().toISOString() });
       const before = await readFile(path, "utf8");
-      assert.deepEqual(await consumeMailbox({ cwd: f.b, ref, ...actor, async deliver() { assert.fail("must not replay"); } }), []);
+      assert.deepEqual(
+        await consumeMailbox({
+          cwd: f.b,
+          ref,
+          ...actor,
+          async deliver() {
+            assert.fail("must not replay");
+          },
+        }),
+        [],
+      );
       assert.equal(await readFile(path, "utf8"), before);
     });
   }
@@ -67,16 +103,38 @@ test("upstream events cannot acknowledge a recipient subscribed to another ref",
     event.ref = ref;
     await writeJson(pathFor(repo, event), event);
     const delivered: string[] = [];
-    await consumeMailbox({ cwd: f.b, ref, ...actor, async deliver(batch) { delivered.push(...batch.map((item) => item.event.id)); } });
+    await consumeMailbox({
+      cwd: f.b,
+      ref,
+      ...actor,
+      async deliver(batch) {
+        delivered.push(...batch.map((item) => item.event.id));
+      },
+    });
     assert.deepEqual(delivered, [event.id]);
   });
   await scenario(async (repo, event) => {
     event.recipients = [otherKey];
     await writeJson(pathFor(repo, event), event);
-    const message = { id: randomBytes(32).toString("hex"), kind: "message", text: "hello", files: [], recipients: [key], sender: event.sender, createdAt: new Date().toISOString() };
+    const message = {
+      id: randomBytes(32).toString("hex"),
+      kind: "message",
+      text: "hello",
+      files: [],
+      recipients: [key],
+      sender: event.sender,
+      createdAt: new Date().toISOString(),
+    };
     await writeJson(join(repo.directory, "events", `${message.id}.json`), message);
     const delivered: string[] = [];
-    await consumeMailbox({ cwd: f.b, ref, ...actor, async deliver(batch) { delivered.push(...batch.map((item) => item.event.id)); } });
+    await consumeMailbox({
+      cwd: f.b,
+      ref,
+      ...actor,
+      async deliver(batch) {
+        delivered.push(...batch.map((item) => item.event.id));
+      },
+    });
     assert.deepEqual(delivered, [message.id]);
   });
 });

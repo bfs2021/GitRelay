@@ -11,7 +11,10 @@ export async function runEnabledHook(...args: Parameters<typeof runHook>): Promi
   process.env.WORKTREE_SYNC_STATE_DIR = directory;
   try {
     const [input, ref] = args;
-    await sessionActivation({ cwd: input.cwd as string, ref, adapter: "codex", session: input.session_id as string }, true);
+    await sessionActivation(
+      { cwd: input.cwd as string, ref, adapter: "codex", session: input.session_id as string },
+      true,
+    );
     await runHook(...args);
   } finally {
     if (previous === undefined) delete process.env.WORKTREE_SYNC_STATE_DIR;

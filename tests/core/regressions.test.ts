@@ -7,7 +7,17 @@ import { collectGarbage } from "../../src/core/cleanup.ts";
 import { worktreeFiles } from "../../src/core/changes.ts";
 import { daemonStatus } from "../../src/core/daemon-state.ts";
 import { removeWorktree, listWorktrees } from "../../src/core/git.ts";
-import { eventsIn, formatNotifications, publishUpstream, readReceipt, readSession, registerSession, sendMessage, sessionKey, type Notification } from "../../src/core/mailbox.ts";
+import {
+  eventsIn,
+  formatNotifications,
+  publishUpstream,
+  readReceipt,
+  readSession,
+  registerSession,
+  sendMessage,
+  sessionKey,
+  type Notification,
+} from "../../src/core/mailbox.ts";
 import { readRef, synchronizeRef } from "../../src/core/publisher.ts";
 import { chooseFreshRepository, repository, stateDirectory, withLock, writeJson } from "../../src/core/store.ts";
 import { fixture, git } from "../helpers.ts";
@@ -16,7 +26,15 @@ const ref = "refs/heads/main";
 
 test("legacy directory-style message paths remain readable without becoming broadcasts", async (t) => {
   const f = await fixture(t);
-  const b = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver() { assert.fail("legacy directory paths must not broadcast"); } };
+  const b = {
+    cwd: f.b,
+    ref,
+    adapter: "codex",
+    session: "B",
+    async deliver() {
+      assert.fail("legacy directory paths must not broadcast");
+    },
+  };
   await consumeMailbox(b);
   const repo = await repository(f.b);
   const key = sessionKey(repo, b, ref);
@@ -26,10 +44,18 @@ test("legacy directory-style message paths remain readable without becoming broa
     const event = await sendMessage({ ...sender, text: "legacy", files: ["shared.txt"] });
     await writeJson(join(repo.directory, "events", `${event.id}.json`), { ...event, files: [file] });
     await consumeMailbox(b);
-    assert.equal(JSON.parse(await readFile(join(repo.directory, "receipts", key, `${event.id}.json`), "utf8")).status, "irrelevant");
+    assert.equal(
+      JSON.parse(await readFile(join(repo.directory, "receipts", key, `${event.id}.json`), "utf8")).status,
+      "irrelevant",
+    );
   }
   assert.equal((await eventsIn(repo)).length, 5);
-  await consumeMailbox({ ...sender, async deliver() { assert.fail("sender must not receive itself"); } });
+  await consumeMailbox({
+    ...sender,
+    async deliver() {
+      assert.fail("sender must not receive itself");
+    },
+  });
   await consumeMailbox({ ...b, session: "new" });
   assert.equal((await collectGarbage(f.b, { apply: true, retentionDays: 0 })).removed.length, 5);
 });
@@ -49,7 +75,15 @@ test("corrupt daemon liveness hints never prevent local fallback", async (t) => 
   const f = await fixture(t);
   await writeFile(join(f.b, "shared.txt"), "local\n");
   let delivered = 0;
-  const b = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver() { delivered++; } };
+  const b = {
+    cwd: f.b,
+    ref,
+    adapter: "codex",
+    session: "B",
+    async deliver() {
+      delivered++;
+    },
+  };
   await consumeMailbox(b);
   for (const name of ["daemon.lock", "daemon.json"]) {
     for (const data of ["", "{broken"]) {
@@ -69,7 +103,15 @@ test("send-first legacy sessions retain the pre-publication migration baseline",
   await consumeMailbox(observer);
   await writeFile(join(f.b, "shared.txt"), "local\n");
   const received: Notification[] = [];
-  const b = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver(batch: Notification[]) { received.push(...batch); } };
+  const b = {
+    cwd: f.b,
+    ref,
+    adapter: "codex",
+    session: "B",
+    async deliver(batch: Notification[]) {
+      received.push(...batch);
+    },
+  };
   const repo = await repository(f.b);
   const key = sessionKey(repo, b, ref);
   await mkdir(join(repo.common, "worktree-agent-sync"));
@@ -83,7 +125,13 @@ test("send-first legacy sessions retain the pre-publication migration baseline",
   await consumeMailbox(b);
   await consumeMailbox(b);
   assert.equal((await readSession(repo, key))!.baseline, f.initial);
-  assert.deepEqual(received.map((n) => n.kind === "upstream" ? [n.event.previous, n.event.commit] : []), [[f.initial, first], [first, second]]);
+  assert.deepEqual(
+    received.map((n) => (n.kind === "upstream" ? [n.event.previous, n.event.commit] : [])),
+    [
+      [f.initial, first],
+      [first, second],
+    ],
+  );
 });
 
 test("retry after event publication includes new subscribers without replaying existing receipts", async (t) => {
@@ -96,7 +144,9 @@ test("retry after event publication includes new subscribers without replaying e
   const next = await f.commit(f.main, "shared.txt", "upstream\n");
   // Model a crash after publishing the event but before committing the ref cursor.
   const key = sessionKey(repo, b, ref);
-  const event = await withLock(join(repo.directory, "publish.lock"), () => publishUpstream(repo, b, ref, f.initial, next, [key]));
+  const event = await withLock(join(repo.directory, "publish.lock"), () =>
+    publishUpstream(repo, b, ref, f.initial, next, [key]),
+  );
   const receipt = { eventId: event.id, status: "delivered", at: new Date().toISOString() };
   await writeJson(join(repo.directory, "receipts", key, `${event.id}.json`), receipt);
   assert.equal((await readRef(repo, ref))!.commit, f.initial);
@@ -118,18 +168,25 @@ test("retry refuses corrupted upstream events without advancing the ref or ackno
   await writeFile(join(f.b, "shared.txt"), "local edit\n");
   const b = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver() {} };
   await consumeMailbox(b);
-  const repo = await repository(f.b), key = sessionKey(repo, b, ref);
+  const repo = await repository(f.b),
+    key = sessionKey(repo, b, ref);
   const next = await f.commit(f.main, "shared.txt", "upstream\n");
-  const event = await withLock(join(repo.directory, "publish.lock"), () => publishUpstream(repo, b, ref, f.initial, next, [key]));
+  const event = await withLock(join(repo.directory, "publish.lock"), () =>
+    publishUpstream(repo, b, ref, f.initial, next, [key]),
+  );
   const c = { cwd: f.c, ref, adapter: "opencode", session: "C" };
   await registerSession(await repository(f.c), c, ref);
-  const cursor = await readRef(repo, ref), path = join(repo.directory, "events", `${event.id}.json`);
+  const cursor = await readRef(repo, ref),
+    path = join(repo.directory, "events", `${event.id}.json`);
   const invalid = [
     { ...event, ref: "refs/heads/other" },
     { ...event, previous: next },
     { ...event, commit: f.initial },
     { ...event, kind: "message", text: "wrong kind", files: [] },
-    null, false, 0, "",
+    null,
+    false,
+    0,
+    "",
   ];
   for (const value of invalid) {
     const bytes = JSON.stringify(value);
@@ -143,7 +200,11 @@ test("retry refuses corrupted upstream events without advancing the ref or ackno
   const delivered = await consumeMailbox(b);
   assert.equal(delivered.length, 1);
   assert.deepEqual([delivered[0].event.kind, delivered[0].event.id], ["upstream", event.id]);
-  assert.ok((await eventsIn(repo)).find((item) => item.id === event.id)?.recipients.includes(sessionKey(await repository(f.c), c, ref)));
+  assert.ok(
+    (await eventsIn(repo))
+      .find((item) => item.id === event.id)
+      ?.recipients.includes(sessionKey(await repository(f.c), c, ref)),
+  );
 });
 
 test("unborn and unrelated worktree histories give actionable errors and preserve pending events", async (t) => {
@@ -170,8 +231,13 @@ test("concurrent consumers all receive every broadcast rather than losing the pu
   const f = await fixture(t);
   const received = Array.from({ length: 10 }, () => [] as string[]);
   const consumers = received.map((ids, index) => ({
-    cwd: f.b, ref, adapter: "test", session: `receiver-${index}`,
-    async deliver(batch: Notification[]) { ids.push(...batch.map((notification) => notification.event.id)); },
+    cwd: f.b,
+    ref,
+    adapter: "test",
+    session: `receiver-${index}`,
+    async deliver(batch: Notification[]) {
+      ids.push(...batch.map((notification) => notification.event.id));
+    },
   }));
   await Promise.all(consumers.map(consumeMailbox));
   const expected: string[] = [];
@@ -188,7 +254,13 @@ test("send-only identities do not subscribe or prevent consumers from collecting
   const c = { cwd: f.c, ref, adapter: "opencode", session: "C", async deliver() {} };
   await consumeMailbox(b);
   await consumeMailbox(c);
-  const first = await sendMessage({ cwd: f.a, ref: "refs/heads/mian", adapter: "cli", session: "one-off", text: "send without subscribing" });
+  const first = await sendMessage({
+    cwd: f.a,
+    ref: "refs/heads/mian",
+    adapter: "cli",
+    session: "one-off",
+    text: "send without subscribing",
+  });
   const senderRepo = await repository(f.a);
   const senderKey = sessionKey(senderRepo, { adapter: "cli", session: "one-off" }, "refs/heads/mian");
   assert.equal(await readSession(senderRepo, senderKey), undefined);
@@ -200,7 +272,10 @@ test("send-only identities do not subscribe or prevent consumers from collecting
   assert.equal(third.recipients.length, 1);
   await consumeMailbox(b);
   await consumeMailbox(c);
-  assert.deepEqual(new Set((await collectGarbage(f.b, { apply: true, retentionDays: 0 })).removed), new Set([first.id, second.id, third.id]));
+  assert.deepEqual(
+    new Set((await collectGarbage(f.b, { apply: true, retentionDays: 0 })).removed),
+    new Set([first.id, second.id, third.id]),
+  );
 });
 
 test("pruned Git objects become an acknowledged history-gap notification, not an inbox barrier", async (t) => {
@@ -209,7 +284,12 @@ test("pruned Git objects become an acknowledged history-gap notification, not an
   const b = { cwd: f.b, ref, adapter: "test", session: "B", async deliver() {} };
   await consumeMailbox(b);
   const lost = await f.commit(f.main, "shared.txt", "pruned commit\n");
-  await consumeMailbox({ ...b, async deliver() { return false; } });
+  await consumeMailbox({
+    ...b,
+    async deliver() {
+      return false;
+    },
+  });
   git(f.main, "reset", "--hard", f.initial);
   git(f.main, "reflog", "expire", "--expire=now", "--all");
   git(f.main, "gc", "--prune=now");
@@ -218,7 +298,13 @@ test("pruned Git objects become an acknowledged history-gap notification, not an
   const message = await sendMessage({ cwd: f.a, adapter: "cli", session: "sender", text: "must get past old history" });
   const repo = await repository(f.b);
   const key = sessionKey(repo, b, ref);
-  const queued = await consumeMailbox({ ...b, acknowledgeUnavailableHistory: true, async deliver() { return false; } });
+  const queued = await consumeMailbox({
+    ...b,
+    acknowledgeUnavailableHistory: true,
+    async deliver() {
+      return false;
+    },
+  });
   const gaps = queued.filter((item) => item.kind === "upstream" && item.change.unavailable);
   assert.equal(gaps.length, 2, "both a missing range end and a missing range start are diagnosed");
   assert.match(formatNotifications(gaps), /history unavailable/);
@@ -238,7 +324,12 @@ test("recreating an unrelated repository at the same path keeps old messages iso
   const receiver = { cwd: f.main, ref, adapter: "test", session: "same-path", async deliver() {} };
   await consumeMailbox(receiver);
   const oldRepo = await repository(f.main);
-  const oldMessage = await sendMessage({ cwd: f.main, adapter: "cli", session: "old-sender", text: "old repository secret" });
+  const oldMessage = await sendMessage({
+    cwd: f.main,
+    adapter: "cli",
+    session: "old-sender",
+    text: "old repository secret",
+  });
   const oldEvent = join(oldRepo.directory, "events", `${oldMessage.id}.json`);
   const original = await readFile(oldEvent);
   await rm(join(f.main, ".git"), { recursive: true });
@@ -263,6 +354,9 @@ test("a prunable worktree registration is retained while automatic removal is un
   await rm(f.a, { recursive: true });
   assert.notEqual((await listWorktrees(f.main)).find((tree) => tree.path === f.a)!.prunable, undefined);
   await assert.rejects(removeWorktree(f.main, f.a), /Automatic worktree removal is temporarily unavailable/);
-  assert.equal((await listWorktrees(f.main)).some((tree) => tree.path === f.a), true);
+  assert.equal(
+    (await listWorktrees(f.main)).some((tree) => tree.path === f.a),
+    true,
+  );
   assert.equal(git(f.main, "rev-parse", "feature/a").trim(), f.initial);
 });

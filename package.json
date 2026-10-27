@@ -18,6 +18,7 @@
     "docs",
     "README.md",
     "CONTRIBUTING.md",
+    "CHANGELOG.md",
     "LICENSE",
     ".codex-plugin",
     "assets"
@@ -39,16 +40,21 @@
     }
   },
   "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check:release": "node scripts/check-release.mjs",
+    "check": "npm run format:check && npm run typecheck && npm run check:release && npm test && npm pack --dry-run",
     "build": "node scripts/build.mjs",
     "build:codex-plugin": "npm run build && node scripts/build-codex-plugin.mjs",
     "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
     "benchmark": "npm run build && node scripts/benchmark.mjs",
-    "test": "npm run build && node --experimental-strip-types --test tests/core/*.test.ts tests/adapters/*.test.ts tests/cli/*.test.ts"
+    "test": "npm run build && node --experimental-strip-types --test tests/core/*.test.ts tests/adapters/*.test.ts tests/cli/*.test.*"
   },
   "devDependencies": {
     "@opencode/plugin": "2.1.2",
     "@types/node": "22.19.7",
+    "prettier": "3.9.10",
     "typescript": "5.9.3"
   }
 }

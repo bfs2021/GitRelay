@@ -6,7 +6,22 @@ import { join } from "node:path";
 import { pathMatcher, worktreeFiles } from "../dist/core/changes.js";
 
 const temporary = await mkdtemp(join(tmpdir(), "git-relay-worktree-bench-"));
-const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, "-c", "user.name=Benchmark", "-c", "user.email=benchmark@example.test", "-c", "commit.gpgsign=false", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+const git = (cwd, ...args) =>
+  execFileSync(
+    "git",
+    [
+      "-C",
+      cwd,
+      "-c",
+      "user.name=Benchmark",
+      "-c",
+      "user.email=benchmark@example.test",
+      "-c",
+      "commit.gpgsign=false",
+      ...args,
+    ],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  ).trim();
 try {
   git(temporary, "init", "-b", "main");
   for (const file of ["committed", "staged", "unstaged"]) await writeFile(join(temporary, file), "base\n");
@@ -32,7 +47,16 @@ try {
     if (i) samples.push(elapsed);
   }
   samples.sort((a, b) => a - b);
-  console.log(JSON.stringify({ node: process.version, git: git(temporary, "--version"), samples: samples.length, medianMs: samples[10], minMs: samples[0], maxMs: samples.at(-1) }));
+  console.log(
+    JSON.stringify({
+      node: process.version,
+      git: git(temporary, "--version"),
+      samples: samples.length,
+      medianMs: samples[10],
+      minMs: samples[0],
+      maxMs: samples.at(-1),
+    }),
+  );
   await writeFile(join(temporary, ".git", "info", "exclude"), "ignored\n.cache/\n");
   const expected = new Set(["committed", "ignored", "staged", "unstaged", "untracked"]);
   let created = 0;

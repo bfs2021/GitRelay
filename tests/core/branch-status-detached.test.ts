@@ -10,15 +10,25 @@ import { formatBranchStatus } from "../../src/core/status-format.ts";
 test("ambiguous Git HEAD labels distinguish branches from detached or non-branch HEAD", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "git-relay-status-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const home = join(root, "home"), repo = join(root, "repo"), hooks = join(root, "hooks");
+  const home = join(root, "home"),
+    repo = join(root, "repo"),
+    hooks = join(root, "hooks");
   for (const path of [home, repo, hooks]) await mkdir(path);
   const config = join(root, "gitconfig");
   await writeFile(config, "");
   const previous = { ...process.env };
-  t.after(() => { process.env = previous; });
+  t.after(() => {
+    process.env = previous;
+  });
   Object.assign(process.env, {
-    HOME: home, XDG_CONFIG_HOME: home, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: config, GIT_TERMINAL_PROMPT: "0",
-    GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.hooksPath", GIT_CONFIG_VALUE_0: hooks,
+    HOME: home,
+    XDG_CONFIG_HOME: home,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: config,
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "core.hooksPath",
+    GIT_CONFIG_VALUE_0: hooks,
   });
   const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { stdio: "pipe" });
   git("init", "-b", "main");
@@ -50,9 +60,12 @@ test("ambiguous Git HEAD labels distinguish branches from detached or non-branch
   if (process.platform !== "win32") {
     git("switch", "(detached)");
     const actualGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
-    const bin = join(root, "bin"), marker = join(root, "marker");
+    const bin = join(root, "bin"),
+      marker = join(root, "marker");
     await mkdir(bin);
-    await writeFile(join(bin, "git"), `#!/bin/sh
+    await writeFile(
+      join(bin, "git"),
+      `#!/bin/sh
 if [ "$3" = symbolic-ref ]; then
   case "$CASE" in
     failure) echo failure >&2; exit 1;;
@@ -61,7 +74,9 @@ if [ "$3" = symbolic-ref ]; then
   esac
 fi
 exec "${actualGit}" "$@"
-`, { mode: 0o755 });
+`,
+      { mode: 0o755 },
+    );
     process.env.PATH = `${bin}:${previous.PATH}`;
     process.env.MARKER = marker;
     process.env.CASE = "failure";

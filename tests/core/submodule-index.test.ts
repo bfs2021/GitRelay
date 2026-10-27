@@ -9,12 +9,21 @@ import { test } from "node:test";
 import { worktreeFiles } from "../../src/core/changes.ts";
 import { fixture } from "../helpers.ts";
 
-test("gitlink index reader handles chunk boundaries, invalid data and cancellation", { timeout: 30_000, skip: process.platform === "win32" ? "The test wrapper requires POSIX executable scripts" : false }, async (t) => {
-  const f = await fixture(t), bin = join(f.root, "fake-bin");
-  await mkdir(bin);
-  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
-  const wrapper = join(bin, "git");
-  await writeFile(wrapper, `#!${process.execPath}
+test(
+  "gitlink index reader handles chunk boundaries, invalid data and cancellation",
+  {
+    timeout: 30_000,
+    skip: process.platform === "win32" ? "The test wrapper requires POSIX executable scripts" : false,
+  },
+  async (t) => {
+    const f = await fixture(t),
+      bin = join(f.root, "fake-bin");
+    await mkdir(bin);
+    const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+    const wrapper = join(bin, "git");
+    await writeFile(
+      wrapper,
+      `#!${process.execPath}
 const { spawnSync } = require("node:child_process");
 const args = process.argv.slice(2), mode = process.env.GIT_RELAY_TEST_INDEX;
 if (!args.includes("ls-files") || !args.includes("--stage")) {
@@ -44,41 +53,77 @@ if (mode === "data") {
 } else if (mode === "wait") {
   setInterval(() => {}, 1000);
 }
-`);
-  await chmod(wrapper, 0o755);
-  const oldPath = process.env.PATH, oldReal = process.env.GIT_RELAY_TEST_REAL_GIT, oldMode = process.env.GIT_RELAY_TEST_INDEX;
-  t.after(() => {
-    if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath;
-    if (oldReal === undefined) delete process.env.GIT_RELAY_TEST_REAL_GIT; else process.env.GIT_RELAY_TEST_REAL_GIT = oldReal;
-    if (oldMode === undefined) delete process.env.GIT_RELAY_TEST_INDEX; else process.env.GIT_RELAY_TEST_INDEX = oldMode;
-  });
-  process.env.PATH = `${bin}:${oldPath ?? ""}`;
-  process.env.GIT_RELAY_TEST_REAL_GIT = realGit;
-  process.env.GIT_RELAY_TEST_INDEX = "data";
-  assert.deepEqual([...await worktreeFiles(f.b, f.initial)], ["sub\tline\n"]);
-  for (const [mode, error] of [["bad-header", /Invalid Git index/], ["invalid-path", /not valid UTF-8/], ["big", /record exceeds 16 MiB/], ["unterminated", /Unterminated Git index/], ["fail", /injected index error/]] as const) {
-    process.env.GIT_RELAY_TEST_INDEX = mode;
-    await assert.rejects(worktreeFiles(f.b, f.initial), error);
-  }
-  process.env.GIT_RELAY_TEST_INDEX = "exact";
-  assert.equal((await worktreeFiles(f.b, f.initial)).size, 0);
-  process.env.GIT_RELAY_TEST_INDEX = "wait";
-  const abort = new AbortController(), reason = new Error("test index cancellation");
-  const timer = setTimeout(() => abort.abort(reason), 200);
-  try { await assert.rejects(worktreeFiles(f.b, f.initial, abort.signal), (error) => error === reason); }
-  finally { clearTimeout(timer); }
-});
+`,
+    );
+    await chmod(wrapper, 0o755);
+    const oldPath = process.env.PATH,
+      oldReal = process.env.GIT_RELAY_TEST_REAL_GIT,
+      oldMode = process.env.GIT_RELAY_TEST_INDEX;
+    t.after(() => {
+      if (oldPath === undefined) delete process.env.PATH;
+      else process.env.PATH = oldPath;
+      if (oldReal === undefined) delete process.env.GIT_RELAY_TEST_REAL_GIT;
+      else process.env.GIT_RELAY_TEST_REAL_GIT = oldReal;
+      if (oldMode === undefined) delete process.env.GIT_RELAY_TEST_INDEX;
+      else process.env.GIT_RELAY_TEST_INDEX = oldMode;
+    });
+    process.env.PATH = `${bin}:${oldPath ?? ""}`;
+    process.env.GIT_RELAY_TEST_REAL_GIT = realGit;
+    process.env.GIT_RELAY_TEST_INDEX = "data";
+    assert.deepEqual([...(await worktreeFiles(f.b, f.initial))], ["sub\tline\n"]);
+    for (const [mode, error] of [
+      ["bad-header", /Invalid Git index/],
+      ["invalid-path", /not valid UTF-8/],
+      ["big", /record exceeds 16 MiB/],
+      ["unterminated", /Unterminated Git index/],
+      ["fail", /injected index error/],
+    ] as const) {
+      process.env.GIT_RELAY_TEST_INDEX = mode;
+      await assert.rejects(worktreeFiles(f.b, f.initial), error);
+    }
+    process.env.GIT_RELAY_TEST_INDEX = "exact";
+    assert.equal((await worktreeFiles(f.b, f.initial)).size, 0);
+    process.env.GIT_RELAY_TEST_INDEX = "wait";
+    const abort = new AbortController(),
+      reason = new Error("test index cancellation");
+    const timer = setTimeout(() => abort.abort(reason), 200);
+    try {
+      await assert.rejects(worktreeFiles(f.b, f.initial, abort.signal), (error) => error === reason);
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+);
 
 test("index reader reports pipe errors and waits for the direct child to close", async (t) => {
-  const f = await fixture(t), original = childProcess.spawn;
+  const f = await fixture(t),
+    original = childProcess.spawn;
   try {
     for (const stream of ["stdout", "stderr"] as const) {
-      let killed = false, closed = false;
+      let killed = false,
+        closed = false;
       const fake = ((command: string, args: readonly string[], options: unknown) => {
         if (!args.includes("--stage")) return original(command, args, options as Parameters<typeof original>[2]);
-        const child = new EventEmitter() as EventEmitter & { stdout: PassThrough; stderr: PassThrough; exitCode: number | null; signalCode: NodeJS.Signals | null; kill(): boolean };
-        child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.exitCode = null; child.signalCode = null;
-        child.kill = () => { killed = true; child.signalCode = "SIGKILL"; setImmediate(() => { closed = true; child.emit("close", null); }); return true; };
+        const child = new EventEmitter() as EventEmitter & {
+          stdout: PassThrough;
+          stderr: PassThrough;
+          exitCode: number | null;
+          signalCode: NodeJS.Signals | null;
+          kill(): boolean;
+        };
+        child.stdout = new PassThrough();
+        child.stderr = new PassThrough();
+        child.exitCode = null;
+        child.signalCode = null;
+        child.kill = () => {
+          killed = true;
+          child.signalCode = "SIGKILL";
+          setImmediate(() => {
+            closed = true;
+            child.emit("close", null);
+          });
+          return true;
+        };
         setImmediate(() => child[stream].emit("error", new Error(`injected ${stream} error`)));
         return child;
       }) as unknown as typeof original;

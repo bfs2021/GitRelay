@@ -34,10 +34,10 @@ replay earlier broadcasts. See [on-demand sessions](docs/integrations.md#on-dema
 
 ## Platform support
 
-| Platform | Entry point | Delivery after opt-in |
-| --- | --- | --- |
-| Codex | Lifecycle hooks or bundled plugin | Context at prompt/tool boundaries; Stop can request continuation |
-| OpenCode v2 | Native Promise plugin | Checks every five seconds; durable host queue handles busy/idle sessions |
+| Platform    | Entry point                       | Delivery after opt-in                                                    |
+| ----------- | --------------------------------- | ------------------------------------------------------------------------ |
+| Codex       | Lifecycle hooks or bundled plugin | Context at prompt/tool boundaries; Stop can request continuation         |
+| OpenCode v2 | Native Promise plugin             | Checks every five seconds; durable host queue handles busy/idle sessions |
 
 Codex hooks cannot wake an already idle session. OpenCode supports the v2 API;
 v1 is not supported. Runtime changes require rebuilding and refreshing the
@@ -94,17 +94,17 @@ worktree needs an entry. Enable its root session with a direct user prompt.
 
 ## Commands
 
-| Goal | Command |
-| --- | --- |
-| Local branch snapshot | `git-relay status` |
-| Live GitHub comparison | `git-relay status --github` |
-| Requested read-only monitoring | `git-relay status --github --watch` |
-| Explicit session enrollment | `git-relay join --agent codex --session NATIVE_ID` |
-| Stop a subscription | `git-relay leave --agent codex --session NATIVE_ID` |
-| Inspect subscriptions | `git-relay sessions` |
-| Receive once / stream NDJSON | `git-relay check --session ID` / `git-relay watch --session ID` |
-| Preview confirmed-event cleanup | `git-relay gc` |
-| Optional centralized monitoring | `git-relay daemon` |
+| Goal                            | Command                                                         |
+| ------------------------------- | --------------------------------------------------------------- |
+| Local branch snapshot           | `git-relay status`                                              |
+| Live GitHub comparison          | `git-relay status --github`                                     |
+| Requested read-only monitoring  | `git-relay status --github --watch`                             |
+| Explicit session enrollment     | `git-relay join --agent codex --session NATIVE_ID`              |
+| Stop a subscription             | `git-relay leave --agent codex --session NATIVE_ID`             |
+| Inspect subscriptions           | `git-relay sessions`                                            |
+| Receive once / stream NDJSON    | `git-relay check --session ID` / `git-relay watch --session ID` |
+| Preview confirmed-event cleanup | `git-relay gc`                                                  |
+| Optional centralized monitoring | `git-relay daemon`                                              |
 
 Use `--cwd /absolute/worktree` and `--ref refs/heads/main` to select the target.
 Reuse the actual native session ID. OpenCode manual access also needs the exact
@@ -152,9 +152,7 @@ See [maintenance](docs/maintenance.md) for daemon and cleanup operations.
 
 ```sh
 npm ci --ignore-scripts --omit=optional
-npm run typecheck
-npm test
-npm pack --dry-run
+npm run check
 npm run benchmark
 ```
 

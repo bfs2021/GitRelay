@@ -61,17 +61,29 @@ test("status writes an App-readable Markdown snapshot and keeps JSON as the defa
   await assert.rejects(run("status", "--watch", "--format", "markdown", "--output", path), /without --watch/);
   await assert.rejects(run("hook", "removed", "--branch-status"), /requires hook codex/);
   const call = exec(process.execPath, [cli, "hook", "codex", "--branch-status"]);
-  call.child.stdin!.end(JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: "Enable GitRelay", session_id: "app-test", cwd: f.b }));
+  call.child.stdin!.end(
+    JSON.stringify({
+      hook_event_name: "UserPromptSubmit",
+      prompt: "Enable GitRelay",
+      session_id: "app-test",
+      cwd: f.b,
+    }),
+  );
   assert.match(JSON.parse((await call).stdout).systemMessage, /feature\/b/);
 });
 
-test("GitHub status uses gh auth/host, encodes branches, handles absence and preserves local state on failure", { skip: process.platform === "win32" }, async (t) => {
-  const f = await fixture(t);
-  const bin = join(f.root, "bin");
-  await mkdir(bin);
-  const response = join(f.root, "response.json");
-  const log = join(f.root, "gh.log");
-  await writeFile(join(bin, "gh"), `#!/usr/bin/env node
+test(
+  "GitHub status uses gh auth/host, encodes branches, handles absence and preserves local state on failure",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const f = await fixture(t);
+    const bin = join(f.root, "bin");
+    await mkdir(bin);
+    const response = join(f.root, "response.json");
+    const log = join(f.root, "gh.log");
+    await writeFile(
+      join(bin, "gh"),
+      `#!/usr/bin/env node
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + '\\n');
@@ -79,58 +91,90 @@ const fixture = JSON.parse(fs.readFileSync(${JSON.stringify(response)}, 'utf8'))
 if (fixture.fail) { process.stderr.write('HTTP 403: denied'); process.exit(1); }
 if (args[0] === 'repo') console.log(JSON.stringify({ nameWithOwner: 'owner/repo', url: 'https://github.example.com/owner/repo' }));
 else console.log(JSON.stringify(fixture.pages));
-`, { mode: 0o755 });
-  const invoke = () => exec(process.execPath, [cli, "status", "--cwd", f.b, "--github", "--repo", "github.example.com/owner/repo"], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
-  const ref = (name: string, sha = f.initial) => ({ ref: `refs/heads/${name}`, object: { type: "commit", sha } });
-  await writeFile(response, JSON.stringify({ pages: [[ref("feature/b-other")], [ref("feature/b")]] }));
-  let status = JSON.parse((await invoke()).stdout);
-  assert.equal(status.github.matchesLocal, true);
-  const calls = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-  assert.deepEqual(calls[0], ["repo", "view", "github.example.com/owner/repo", "--json", "nameWithOwner,url"]);
-  assert.deepEqual(calls[1], ["api", "--hostname", "github.example.com", "--method", "GET", "--paginate", "--slurp", "repos/owner/repo/git/matching-refs/heads/feature%2Fb"]);
-  await writeFile(response, JSON.stringify({ pages: [[ref("feature/b", "a".repeat(40))]] }));
-  assert.equal(JSON.parse((await invoke()).stdout).github.matchesLocal, false);
-  await writeFile(response, JSON.stringify({ pages: [[ref("feature/b-other")]] }));
-  assert.equal(JSON.parse((await invoke()).stdout).github.commit, null);
-  for (const invalid of [{ fail: true }, { pages: [[ref("feature/b", "invalid")]] }, { pages: {} }]) {
-    await writeFile(response, JSON.stringify(invalid));
-    await assert.rejects(invoke(), (error: Error & { stdout?: string; code?: number }) => {
-      status = JSON.parse(error.stdout!);
-      assert.equal(error.code, 1);
-      assert.equal(status.local.commit, f.initial);
-      assert.match(status.github.error, /denied|Invalid GitHub/);
-      return true;
-    });
-  }
-  await writeFile(response, JSON.stringify({ pages: [[ref("feature/b")]] }));
-  assert.equal(JSON.parse((await invoke()).stdout).github.matchesLocal, true);
-});
+`,
+      { mode: 0o755 },
+    );
+    const invoke = () =>
+      exec(process.execPath, [cli, "status", "--cwd", f.b, "--github", "--repo", "github.example.com/owner/repo"], {
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      });
+    const ref = (name: string, sha = f.initial) => ({ ref: `refs/heads/${name}`, object: { type: "commit", sha } });
+    await writeFile(response, JSON.stringify({ pages: [[ref("feature/b-other")], [ref("feature/b")]] }));
+    let status = JSON.parse((await invoke()).stdout);
+    assert.equal(status.github.matchesLocal, true);
+    const calls = (await readFile(log, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(calls[0], ["repo", "view", "github.example.com/owner/repo", "--json", "nameWithOwner,url"]);
+    assert.deepEqual(calls[1], [
+      "api",
+      "--hostname",
+      "github.example.com",
+      "--method",
+      "GET",
+      "--paginate",
+      "--slurp",
+      "repos/owner/repo/git/matching-refs/heads/feature%2Fb",
+    ]);
+    await writeFile(response, JSON.stringify({ pages: [[ref("feature/b", "a".repeat(40))]] }));
+    assert.equal(JSON.parse((await invoke()).stdout).github.matchesLocal, false);
+    await writeFile(response, JSON.stringify({ pages: [[ref("feature/b-other")]] }));
+    assert.equal(JSON.parse((await invoke()).stdout).github.commit, null);
+    for (const invalid of [{ fail: true }, { pages: [[ref("feature/b", "invalid")]] }, { pages: {} }]) {
+      await writeFile(response, JSON.stringify(invalid));
+      await assert.rejects(invoke(), (error: Error & { stdout?: string; code?: number }) => {
+        status = JSON.parse(error.stdout!);
+        assert.equal(error.code, 1);
+        assert.equal(status.local.commit, f.initial);
+        assert.match(status.github.error, /denied|Invalid GitHub/);
+        return true;
+      });
+    }
+    await writeFile(response, JSON.stringify({ pages: [[ref("feature/b")]] }));
+    assert.equal(JSON.parse((await invoke()).stdout).github.matchesLocal, true);
+  },
+);
 
-test("status watch emits changes once, broadcasts after baseline, and exits on SIGTERM", { timeout: 15000 }, async (t) => {
-  const f = await fixture(t);
-  await run("check", "--cwd", f.c, "--session", "receiver");
-  const child = spawn(process.execPath, [cli, "status", "--cwd", f.b, "--watch", "--interval-ms", "50", "--session", "monitor"], { stdio: ["ignore", "pipe", "pipe"] });
-  t.after(() => { child.kill("SIGKILL"); });
-  const exited = once(child, "exit");
-  let stdout = "";
-  let stderr = "";
-  child.stdout.on("data", (data) => { stdout += data; });
-  child.stderr.on("data", (data) => { stderr += data; });
-  const lines = () => stdout.trim().split("\n").filter(Boolean);
-  const waitFor = async (count: number) => {
-    const deadline = Date.now() + 5000;
-    while (lines().length < count && Date.now() < deadline) await delay(25);
-    assert.equal(lines().length, count, stderr);
-  };
-  await waitFor(1);
-  assert.equal((await run("check", "--cwd", f.c, "--session", "receiver")).stdout, "");
-  await writeFile(join(f.b, "shared.txt"), "dirty\n");
-  await waitFor(2);
-  const received = JSON.parse((await run("check", "--cwd", f.c, "--session", "receiver")).stdout);
-  assert.equal(JSON.parse(received.text).worktree.dirty, true);
-  await delay(200);
-  assert.equal(lines().length, 2);
-  assert.equal((await run("check", "--cwd", f.c, "--session", "receiver")).stdout, "");
-  child.kill("SIGTERM");
-  assert.deepEqual(await exited, [0, null]);
-});
+test(
+  "status watch emits changes once, broadcasts after baseline, and exits on SIGTERM",
+  { timeout: 15000 },
+  async (t) => {
+    const f = await fixture(t);
+    await run("check", "--cwd", f.c, "--session", "receiver");
+    const child = spawn(
+      process.execPath,
+      [cli, "status", "--cwd", f.b, "--watch", "--interval-ms", "50", "--session", "monitor"],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    t.after(() => {
+      child.kill("SIGKILL");
+    });
+    const exited = once(child, "exit");
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (data) => {
+      stdout += data;
+    });
+    child.stderr.on("data", (data) => {
+      stderr += data;
+    });
+    const lines = () => stdout.trim().split("\n").filter(Boolean);
+    const waitFor = async (count: number) => {
+      const deadline = Date.now() + 5000;
+      while (lines().length < count && Date.now() < deadline) await delay(25);
+      assert.equal(lines().length, count, stderr);
+    };
+    await waitFor(1);
+    assert.equal((await run("check", "--cwd", f.c, "--session", "receiver")).stdout, "");
+    await writeFile(join(f.b, "shared.txt"), "dirty\n");
+    await waitFor(2);
+    const received = JSON.parse((await run("check", "--cwd", f.c, "--session", "receiver")).stdout);
+    assert.equal(JSON.parse(received.text).worktree.dirty, true);
+    await delay(200);
+    assert.equal(lines().length, 2);
+    assert.equal((await run("check", "--cwd", f.c, "--session", "receiver")).stdout, "");
+    child.kill("SIGTERM");
+    assert.deepEqual(await exited, [0, null]);
+  },
+);

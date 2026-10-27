@@ -35,10 +35,10 @@ Git 监控。
 
 ## 平台支持
 
-| 平台 | 接入方式 | 启用后的投递方式 |
-| --- | --- | --- |
-| Codex | 生命周期 hooks 或独立插件 | 提示词、工具结束时注入上下文；Stop 可请求继续 |
-| OpenCode v2 | 原生 Promise 插件 | 每 5 秒检查；忙时进入宿主持久队列，空闲时可唤醒 |
+| 平台        | 接入方式                  | 启用后的投递方式                                |
+| ----------- | ------------------------- | ----------------------------------------------- |
+| Codex       | 生命周期 hooks 或独立插件 | 提示词、工具结束时注入上下文；Stop 可请求继续   |
+| OpenCode v2 | 原生 Promise 插件         | 每 5 秒检查；忙时进入宿主持久队列，空闲时可唤醒 |
 
 Codex hooks 无法主动唤醒已经空闲的会话。仅支持 OpenCode v2 API，不支持 v1。
 安装、hook 信任和真实宿主收件属于不同验证阶段，见
@@ -90,17 +90,17 @@ export { default } from "/absolute/path/to/GitRelay/dist/adapters/opencode/index
 
 ## 常用命令
 
-| 目的 | 命令 |
-| --- | --- |
-| 本地分支快照 | `git-relay status` |
-| GitHub 实时比较 | `git-relay status --github` |
-| 用户要求的只读监控 | `git-relay status --github --watch` |
-| 明确加入会话订阅 | `git-relay join --agent codex --session NATIVE_ID` |
-| 停止订阅 | `git-relay leave --agent codex --session NATIVE_ID` |
-| 查看已登记会话 | `git-relay sessions` |
+| 目的                 | 命令                                                            |
+| -------------------- | --------------------------------------------------------------- |
+| 本地分支快照         | `git-relay status`                                              |
+| GitHub 实时比较      | `git-relay status --github`                                     |
+| 用户要求的只读监控   | `git-relay status --github --watch`                             |
+| 明确加入会话订阅     | `git-relay join --agent codex --session NATIVE_ID`              |
+| 停止订阅             | `git-relay leave --agent codex --session NATIVE_ID`             |
+| 查看已登记会话       | `git-relay sessions`                                            |
 | 单次接收 / NDJSON 流 | `git-relay check --session ID` / `git-relay watch --session ID` |
-| 预览已确认事件清理 | `git-relay gc` |
-| 可选集中监控 | `git-relay daemon` |
+| 预览已确认事件清理   | `git-relay gc`                                                  |
+| 可选集中监控         | `git-relay daemon`                                              |
 
 用 `--cwd /absolute/worktree` 和 `--ref refs/heads/main` 指定工作树及监听引用。
 使用真实、稳定的原生会话 ID；OpenCode 手动访问还需传入 `sessions` 返回的准确
@@ -140,9 +140,7 @@ GitHub 查询额外依赖已认证的 `gh`。ahead/behind 使用本地缓存引�
 
 ```sh
 npm ci --ignore-scripts --omit=optional
-npm run typecheck
-npm test
-npm pack --dry-run
+npm run check
 npm run benchmark
 ```
 

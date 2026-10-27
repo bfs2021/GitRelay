@@ -12,9 +12,18 @@ export type Platform = keyof typeof clients;
 export type Detection =
   | { platform: Platform; status: "missing" }
   | { platform: Platform; status: "unavailable"; reason: string }
-  | { platform: Platform; status: "installed" | "incompatible" | "unverified"; version: string; previouslyTested: boolean };
+  | {
+      platform: Platform;
+      status: "installed" | "incompatible" | "unverified";
+      version: string;
+      previouslyTested: boolean;
+    };
 
-export async function detectPlatform(platform: Platform, env: NodeJS.ProcessEnv = process.env, signal?: AbortSignal): Promise<Detection> {
+export async function detectPlatform(
+  platform: Platform,
+  env: NodeJS.ProcessEnv = process.env,
+  signal?: AbortSignal,
+): Promise<Detection> {
   signal?.throwIfAborted();
   const { command, verified } = clients[platform];
   if (env.PATH === undefined) return { platform, status: "unavailable", reason: "PATH is not set" };
@@ -29,7 +38,10 @@ export async function detectPlatform(platform: Platform, env: NodeJS.ProcessEnv 
       try {
         const info = await stat(candidate);
         signal?.throwIfAborted();
-        if (!info.isFile()) { inaccessible ??= candidate; continue; }
+        if (!info.isFile()) {
+          inaccessible ??= candidate;
+          continue;
+        }
         await access(candidate, constants.X_OK);
         signal?.throwIfAborted();
         try {
@@ -45,15 +57,18 @@ export async function detectPlatform(platform: Platform, env: NodeJS.ProcessEnv 
           }
           return { platform, status: "unavailable", reason: `Version check failed: ${(error as Error).message}` };
         }
-      }
-      catch (error) {
+      } catch (error) {
         signal?.throwIfAborted();
         const code = (error as NodeJS.ErrnoException).code;
         if (code === "ENOENT" || code === "ENOTDIR") {
-          try { await lstat(candidate); signal?.throwIfAborted(); inaccessible ??= candidate; }
-          catch (entryError) {
+          try {
+            await lstat(candidate);
             signal?.throwIfAborted();
-            if (!["ENOENT", "ENOTDIR"].includes((entryError as NodeJS.ErrnoException).code ?? "")) inaccessible ??= candidate;
+            inaccessible ??= candidate;
+          } catch (entryError) {
+            signal?.throwIfAborted();
+            if (!["ENOENT", "ENOTDIR"].includes((entryError as NodeJS.ErrnoException).code ?? ""))
+              inaccessible ??= candidate;
           }
         } else {
           inaccessible ??= candidate;
@@ -63,20 +78,30 @@ export async function detectPlatform(platform: Platform, env: NodeJS.ProcessEnv 
     if (output) break;
   }
   signal?.throwIfAborted();
-  if (!output) return failedSpawn
-    ? { platform, status: "unavailable", reason: `Version check failed: ${failedSpawn.message}` }
-    : inaccessible
-      ? { platform, status: "unavailable", reason: `Cannot execute ${inaccessible}` }
-      : { platform, status: "missing" };
+  if (!output)
+    return failedSpawn
+      ? { platform, status: "unavailable", reason: `Version check failed: ${failedSpawn.message}` }
+      : inaccessible
+        ? { platform, status: "unavailable", reason: `Cannot execute ${inaccessible}` }
+        : { platform, status: "missing" };
   try {
     const { stdout, stderr } = output;
     // A version attached to a wrapper name can still make its output ambiguous.
-    const allVersions = new Set([...`${stdout}\n${stderr}`.matchAll(/v?(\d+\.\d+\.\d+[\w.+-]*)/g)].map((match) => match[1]));
+    const allVersions = new Set(
+      [...`${stdout}\n${stderr}`.matchAll(/v?(\d+\.\d+\.\d+[\w.+-]*)/g)].map((match) => match[1]),
+    );
     const matches = [...stdout.matchAll(/(?:^|[^\w.+-])(v?)(\d+\.\d+\.\d+[\w.+-]*)/g)];
     const versions = new Set(matches.map((match) => match[2]));
-    if (allVersions.size > 1) return { platform, status: "unavailable", reason: "Ambiguous version output: multiple distinct versions" };
+    if (allVersions.size > 1)
+      return { platform, status: "unavailable", reason: "Ambiguous version output: multiple distinct versions" };
     const version = versions.values().next().value;
-    if (!version || matches.some((match) => match[1].length + match[2].length > 256) || !/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*))*)?(?:\+[\dA-Za-z-]+(?:\.[\dA-Za-z-]+)*)?$/.test(version)) {
+    if (
+      !version ||
+      matches.some((match) => match[1].length + match[2].length > 256) ||
+      !/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*))*)?(?:\+[\dA-Za-z-]+(?:\.[\dA-Za-z-]+)*)?$/.test(
+        version,
+      )
+    ) {
       return { platform, status: "unavailable", reason: "Unrecognized version output" };
     }
     const previouslyTested = version === verified;
@@ -86,8 +111,14 @@ export async function detectPlatform(platform: Platform, env: NodeJS.ProcessEnv 
       return { platform, status: "unavailable", reason: "Unrecognized version output" };
     }
     const prerelease = versionWithoutBuild.includes("-");
-    const supportedOpenCode = platform === "opencode" && major === 2 && !prerelease && (minor > 1 || (minor === 1 && patch >= 2));
-    const status = platform === "opencode" && major < 2 ? "incompatible" : previouslyTested || supportedOpenCode ? "installed" : "unverified";
+    const supportedOpenCode =
+      platform === "opencode" && major === 2 && !prerelease && (minor > 1 || (minor === 1 && patch >= 2));
+    const status =
+      platform === "opencode" && major < 2
+        ? "incompatible"
+        : previouslyTested || supportedOpenCode
+          ? "installed"
+          : "unverified";
     return { platform, status, version, previouslyTested };
   } catch (error) {
     signal?.throwIfAborted();

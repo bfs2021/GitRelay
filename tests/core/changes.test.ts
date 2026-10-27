@@ -63,13 +63,22 @@ test("history read batches preserve commit and patch order across empty and unre
       commits.push(git(f.main, "rev-parse", "HEAD").trim());
     } else {
       const relevant = index === 0 || index === 65;
-      commits.push(await f.commit(f.main, relevant ? "shared.txt" : "other.txt", relevant ? (index === 0 ? "temporary\n" : "base\n") : `${index}\n`));
+      commits.push(
+        await f.commit(
+          f.main,
+          relevant ? "shared.txt" : "other.txt",
+          relevant ? (index === 0 ? "temporary\n" : "base\n") : `${index}\n`,
+        ),
+      );
     }
   }
   const change = await inspectChange({ root: f.b, ref, commit: f.initial }, commits.at(-1)!);
   assert.deepEqual(change?.files, ["shared.txt"]);
   assert.deepEqual(change?.commits, commits);
-  assert.deepEqual([...change!.patch.matchAll(/\nCommit ([a-f0-9]+)\n/g)].map((match) => match[1]), [commits[0], commits[65]]);
+  assert.deepEqual(
+    [...change!.patch.matchAll(/\nCommit ([a-f0-9]+)\n/g)].map((match) => match[1]),
+    [commits[0], commits[65]],
+  );
   assert.match(change!.patch, /temporary/);
 });
 
@@ -91,20 +100,28 @@ test("batched history preserves merge files, leading newlines and hash-shaped fi
   const change = await inspectChange({ root: f.b, ref, commit: f.initial }, current);
   assert.deepEqual(change?.files, files.sort());
   assert.deepEqual(change?.commits, [merge, empty, current]);
-  assert.deepEqual([...change!.patch.matchAll(/\nCommit ([a-f0-9]+)\n/g)].map((match) => match[1]), [merge]);
+  assert.deepEqual(
+    [...change!.patch.matchAll(/\nCommit ([a-f0-9]+)\n/g)].map((match) => match[1]),
+    [merge],
+  );
 });
 
-test("combined history handles overflow and rejects incomplete or misordered output", { skip: process.platform === "win32" }, async (t) => {
-  const f = await fixture(t);
-  await writeFile(join(f.b, "shared.txt"), "local\n");
-  const first = await f.commit(f.main, "shared.txt", "temporary\n");
-  const current = await f.commit(f.main, "shared.txt", "base\n");
-  const executable = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
-  const bin = join(f.root, "bin");
-  const response = join(f.root, "log-response");
-  await mkdir(bin);
-  await writeFile(response, "x".repeat(17 * 1024 * 1024));
-  await writeFile(join(bin, "git"), `#!/usr/bin/env node
+test(
+  "combined history handles overflow and rejects incomplete or misordered output",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const f = await fixture(t);
+    await writeFile(join(f.b, "shared.txt"), "local\n");
+    const first = await f.commit(f.main, "shared.txt", "temporary\n");
+    const current = await f.commit(f.main, "shared.txt", "base\n");
+    const executable = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+    const bin = join(f.root, "bin");
+    const response = join(f.root, "log-response");
+    await mkdir(bin);
+    await writeFile(response, "x".repeat(17 * 1024 * 1024));
+    await writeFile(
+      join(bin, "git"),
+      `#!/usr/bin/env node
 const { spawnSync } = require('node:child_process');
 const args = process.argv.slice(2);
 if (args[2] === 'log') process.stdout.write(require('node:fs').readFileSync(${JSON.stringify(response)}));
@@ -112,23 +129,32 @@ else {
   const child = spawnSync(${JSON.stringify(executable)}, args, { stdio: 'inherit' });
   process.exit(child.status ?? 1);
 }
-`, { mode: 0o755 });
-  const previousPath = process.env.PATH;
-  try {
-    process.env.PATH = `${bin}:${previousPath}`;
-    const change = await inspectChange({ root: f.b, ref, commit: f.initial }, current);
-    assert.deepEqual(change?.files, ["shared.txt"]);
-    assert.deepEqual(change?.commits, [first, current]);
-    assert.match(change!.patch, /temporary/);
-    for (const output of ["", `\0${first}\0`, `\0${current}\0\0${first}\0`, `\0${first}\0shared.txt\0\0${current}\0`, `\0${first}\0\0${current}\0\nshared`]) {
-      await writeFile(response, output);
-      await assert.rejects(inspectChange({ root: f.b, ref, commit: f.initial }, current), /Git history/);
+`,
+      { mode: 0o755 },
+    );
+    const previousPath = process.env.PATH;
+    try {
+      process.env.PATH = `${bin}:${previousPath}`;
+      const change = await inspectChange({ root: f.b, ref, commit: f.initial }, current);
+      assert.deepEqual(change?.files, ["shared.txt"]);
+      assert.deepEqual(change?.commits, [first, current]);
+      assert.match(change!.patch, /temporary/);
+      for (const output of [
+        "",
+        `\0${first}\0`,
+        `\0${current}\0\0${first}\0`,
+        `\0${first}\0shared.txt\0\0${current}\0`,
+        `\0${first}\0\0${current}\0\nshared`,
+      ]) {
+        await writeFile(response, output);
+        await assert.rejects(inspectChange({ root: f.b, ref, commit: f.initial }, current), /Git history/);
+      }
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
     }
-  } finally {
-    if (previousPath === undefined) delete process.env.PATH;
-    else process.env.PATH = previousPath;
-  }
-});
+  },
+);
 
 test("unrelated updates do not trigger, ref rewind is identified, subdirectories resolve to root", async (t) => {
   const f = await fixture(t);

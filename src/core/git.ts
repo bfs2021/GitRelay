@@ -17,7 +17,12 @@ export interface Worktree {
   prunable?: string;
 }
 
-export async function git(cwd: string, args: string[], signal?: AbortSignal, paths?: "paths" | "worktree-records"): Promise<string> {
+export async function git(
+  cwd: string,
+  args: string[],
+  signal?: AbortSignal,
+  paths?: "paths" | "worktree-records",
+): Promise<string> {
   signal?.throwIfAborted();
   try {
     const { stdout } = await exec("git", ["-C", cwd, ...args], {
@@ -32,7 +37,8 @@ export async function git(cwd: string, args: string[], signal?: AbortSignal, pat
       const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
       if (paths === "paths") return decoder.decode(stdout);
       for (let start = 0; start < stdout.length;) {
-        const delimiter = stdout.indexOf(0, start), end = delimiter < 0 ? stdout.length : delimiter;
+        const delimiter = stdout.indexOf(0, start),
+          end = delimiter < 0 ? stdout.length : delimiter;
         const field = stdout.subarray(start, end);
         for (const prefix of [Buffer.from("worktree "), Buffer.from("branch ")]) {
           if (field.subarray(0, prefix.length).equals(prefix)) decoder.decode(field.subarray(prefix.length));
@@ -40,8 +46,11 @@ export async function git(cwd: string, args: string[], signal?: AbortSignal, pat
         start = end + 1;
       }
       return stdout.toString("utf8");
+    } catch (cause) {
+      throw new GitPathOutputError("Git returned a path or ref that is not valid UTF-8; cannot safely continue.", {
+        cause,
+      });
     }
-    catch (cause) { throw new GitPathOutputError("Git returned a path or ref that is not valid UTF-8; cannot safely continue.", { cause }); }
   } catch (error) {
     signal?.throwIfAborted();
     if (error instanceof GitPathOutputError) throw error;
@@ -61,7 +70,9 @@ export function gitPathLine(output: string): string {
 /** Parse Git ref lines without trimming valid Unicode ref characters. */
 export function gitRefLines(output: string): string[] {
   if (output && !output.endsWith("\n")) throw new GitPathOutputError("Git returned unterminated ref data.");
-  return output.split("\n").map((line) => process.platform === "win32" && line.endsWith("\r") ? line.slice(0, -1) : line);
+  return output
+    .split("\n")
+    .map((line) => (process.platform === "win32" && line.endsWith("\r") ? line.slice(0, -1) : line));
 }
 
 /** Configuration and symbolic-ref require exactly one complete record. */
@@ -110,8 +121,18 @@ export async function addWorktree(
   if (branch.startsWith("-") || branch.startsWith("@{")) throw new Error("Use an explicit branch name.");
   const target = resolve(cwd, path);
   if (newBranch) {
-    const refs = gitRefLines(await git(cwd, ["for-each-ref", "--format=%(refname)", "--", `refs/heads/${startPoint}`, `refs/tags/${startPoint}`], undefined, "paths"));
-    if (refs.includes(`refs/heads/${startPoint}`) && refs.includes(`refs/tags/${startPoint}`)) throw new Error("The starting point matches both a branch and a tag; use a full ref under refs/heads/ or refs/tags/.");
+    const refs = gitRefLines(
+      await git(
+        cwd,
+        ["for-each-ref", "--format=%(refname)", "--", `refs/heads/${startPoint}`, `refs/tags/${startPoint}`],
+        undefined,
+        "paths",
+      ),
+    );
+    if (refs.includes(`refs/heads/${startPoint}`) && refs.includes(`refs/tags/${startPoint}`))
+      throw new Error(
+        "The starting point matches both a branch and a tag; use a full ref under refs/heads/ or refs/tags/.",
+      );
     const commit = (await git(cwd, ["rev-parse", "--verify", "--end-of-options", `${startPoint}^{commit}`])).trim();
     await git(cwd, ["worktree", "add", "-b", branch, "--", target, commit]);
   } else {
@@ -138,5 +159,7 @@ export async function removeWorktree(cwd: string, path: string): Promise<void> {
     throw new Error("Cannot remove the current worktree. Run Git from another worktree first.");
   }
   // shortcut: Git has no identity-conditional removal; restore only with atomic target binding.
-  throw new Error("Automatic worktree removal is temporarily unavailable because Git cannot atomically verify the selected worktree. Stop other worktree operations, inspect the target and back up ignored files before using Git manually.");
+  throw new Error(
+    "Automatic worktree removal is temporarily unavailable because Git cannot atomically verify the selected worktree. Stop other worktree operations, inspect the target and back up ignored files before using Git manually.",
+  );
 }

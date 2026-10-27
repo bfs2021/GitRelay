@@ -13,8 +13,10 @@ test("path matching respects directory boundaries and normalized case", async (t
   const own = new Set(["foo/bar", "foobar/file", "Éclair/😀/file", "Case/", deep]);
   git(f.b, "config", "core.ignorecase", "false");
   const matches = await pathMatcher(f.b, own);
-  for (const file of ["foo", "foo/bar", "foo/bar/child", "foobar", "Éclair/😀", "Case/child", "a", deep]) assert.equal(matches(file), true, file.slice(0, 80));
-  for (const file of [".", "foo/", "fo", "foo2", "FOO", "éclair/😀", "Case2/child"]) assert.equal(matches(file), false, file);
+  for (const file of ["foo", "foo/bar", "foo/bar/child", "foobar", "Éclair/😀", "Case/child", "a", deep])
+    assert.equal(matches(file), true, file.slice(0, 80));
+  for (const file of [".", "foo/", "fo", "foo2", "FOO", "éclair/😀", "Case2/child"])
+    assert.equal(matches(file), false, file);
   git(f.b, "config", "core.ignorecase", "true");
   const folded = await pathMatcher(f.b, own);
   assert.equal(folded("FOO"), true);
@@ -56,7 +58,13 @@ test("untracked nested repositories remain relevant to upstream and messages", a
   const current = await f.commit(f.main, "nested/file.txt", "upstream");
   const upstream = (await consumeMailbox(receiver)).find((item) => item.kind === "upstream");
   assert.equal(upstream?.event.commit, current);
-  const message = await sendMessage({ cwd: f.main, adapter: "test", session: "sender", text: "overlap", files: ["ignored/file.txt"] });
+  const message = await sendMessage({
+    cwd: f.main,
+    adapter: "test",
+    session: "sender",
+    text: "overlap",
+    files: ["ignored/file.txt"],
+  });
   assert.ok((await consumeMailbox(receiver)).some((item) => item.event.id === message.id));
   assert.deepEqual(await consumeMailbox(receiver), []);
 });

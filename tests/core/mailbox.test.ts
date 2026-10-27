@@ -16,12 +16,23 @@ const ref = "refs/heads/main";
 test("invalid UTF-8 in an event or receipt cannot silently acknowledge a message", async (t) => {
   const f = await fixture(t);
   const delivered: string[] = [];
-  const recipient = { cwd: f.b, ref, adapter: "test", session: "recipient", async deliver(batch: Notification[]) { delivered.push(...batch.map((item) => item.event.id)); } };
+  const recipient = {
+    cwd: f.b,
+    ref,
+    adapter: "test",
+    session: "recipient",
+    async deliver(batch: Notification[]) {
+      delivered.push(...batch.map((item) => item.event.id));
+    },
+  };
   await consumeMailbox(recipient);
   const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "ABCZZZDEF" });
-  const repo = await repository(f.b), key = sessionKey(repo, recipient, ref);
-  const eventPath = join(repo.directory, "events", `${event.id}.json`), receiptPath = join(repo.directory, "receipts", key, `${event.id}.json`);
-  const original = await readFile(eventPath), corrupt = Buffer.from(original);
+  const repo = await repository(f.b),
+    key = sessionKey(repo, recipient, ref);
+  const eventPath = join(repo.directory, "events", `${event.id}.json`),
+    receiptPath = join(repo.directory, "receipts", key, `${event.id}.json`);
+  const original = await readFile(eventPath),
+    corrupt = Buffer.from(original);
   const offset = corrupt.indexOf(Buffer.from("ZZZ"));
   assert.notEqual(offset, -1);
   corrupt[offset] = 0xff;
@@ -35,7 +46,8 @@ test("invalid UTF-8 in an event or receipt cannot silently acknowledge a message
   await writeFile(eventPath, original);
   const invalidReceipt = Buffer.concat([
     Buffer.from(`{"eventId":"${event.id}","status":"delivered","at":"${new Date().toISOString()}","note":"`),
-    Buffer.from([0xff]), Buffer.from('"}'),
+    Buffer.from([0xff]),
+    Buffer.from('"}'),
   ]);
   await writeFile(receiptPath, invalidReceipt);
   await assert.rejects(consumeMailbox(recipient), /Invalid UTF-8 in state file/);
@@ -52,11 +64,32 @@ test("Claude Code publishes one message; Codex and OpenCode receive independent 
   const f = await fixture(t);
   const b: Notification[] = [];
   const c: Notification[] = [];
-  const codex = { cwd: f.b, ref, adapter: "codex", session: "same-native-id", async deliver(batch: Notification[]) { b.push(...batch); } };
-  const opencode = { cwd: f.c, ref, adapter: "opencode", session: "same-native-id", async deliver(batch: Notification[]) { c.push(...batch); } };
+  const codex = {
+    cwd: f.b,
+    ref,
+    adapter: "codex",
+    session: "same-native-id",
+    async deliver(batch: Notification[]) {
+      b.push(...batch);
+    },
+  };
+  const opencode = {
+    cwd: f.c,
+    ref,
+    adapter: "opencode",
+    session: "same-native-id",
+    async deliver(batch: Notification[]) {
+      c.push(...batch);
+    },
+  };
   await consumeMailbox(codex);
   await consumeMailbox(opencode);
-  const event = await sendMessage({ cwd: f.a, adapter: "codex", session: "A", text: "The interface has changed; check its callers." });
+  const event = await sendMessage({
+    cwd: f.a,
+    adapter: "codex",
+    session: "A",
+    text: "The interface has changed; check its callers.",
+  });
   assert.equal(event.recipients.length, 2);
   await consumeMailbox(codex);
   assert.equal(b[0].event.id, event.id);
@@ -83,9 +116,34 @@ test("a shared main event is published once; one agent's failed delivery does no
   await writeFile(join(f.c, "shared.txt"), "C local\n");
   const deliveries: string[] = [];
   let fail = false;
-  const a = { cwd: f.a, ref, adapter: "codex", session: "A", async deliver() { assert.fail("clean source should not be notified"); } };
-  const b = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver(batch: Notification[]) { if (fail) throw new Error("offline"); deliveries.push(...batch.map((n) => n.event.id)); } };
-  const c = { cwd: f.c, ref, adapter: "opencode", session: "C", async deliver(batch: Notification[]) { deliveries.push(...batch.map((n) => n.event.id)); } };
+  const a = {
+    cwd: f.a,
+    ref,
+    adapter: "codex",
+    session: "A",
+    async deliver() {
+      assert.fail("clean source should not be notified");
+    },
+  };
+  const b = {
+    cwd: f.b,
+    ref,
+    adapter: "codex",
+    session: "B",
+    async deliver(batch: Notification[]) {
+      if (fail) throw new Error("offline");
+      deliveries.push(...batch.map((n) => n.event.id));
+    },
+  };
+  const c = {
+    cwd: f.c,
+    ref,
+    adapter: "opencode",
+    session: "C",
+    async deliver(batch: Notification[]) {
+      deliveries.push(...batch.map((n) => n.event.id));
+    },
+  };
   await consumeMailbox(a);
   await consumeMailbox(b);
   await consumeMailbox(c);
@@ -108,8 +166,24 @@ test("file-scoped messages only reach overlapping worktrees, and new sessions do
   await writeFile(join(f.c, "other.txt"), "C local\n");
   let b = 0;
   let c = 0;
-  const codex = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver() { b++; } };
-  const opencode = { cwd: f.c, ref, adapter: "opencode", session: "C", async deliver() { c++; } };
+  const codex = {
+    cwd: f.b,
+    ref,
+    adapter: "codex",
+    session: "B",
+    async deliver() {
+      b++;
+    },
+  };
+  const opencode = {
+    cwd: f.c,
+    ref,
+    adapter: "opencode",
+    session: "C",
+    async deliver() {
+      c++;
+    },
+  };
   await consumeMailbox(codex);
   await consumeMailbox(opencode);
   await sendMessage({ cwd: f.a, adapter: "codex", session: "A", text: "shared changed", files: ["shared.txt"] });
@@ -117,26 +191,61 @@ test("file-scoped messages only reach overlapping worktrees, and new sessions do
   await consumeMailbox(opencode);
   assert.equal(b, 1);
   assert.equal(c, 0);
-  await consumeMailbox({ ...codex, session: "new-conversation", async deliver() { assert.fail("no historical replay"); } });
+  await consumeMailbox({
+    ...codex,
+    session: "new-conversation",
+    async deliver() {
+      assert.fail("no historical replay");
+    },
+  });
 });
 
 test("file aliases normalize before deduplication and delivery, including retained events", async (t) => {
   const f = await fixture(t);
   await writeFile(join(f.b, "shared.txt"), "local\n");
   const received: Notification[] = [];
-  const options = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver(batch: Notification[]) { received.push(...batch); } };
+  const options = {
+    cwd: f.b,
+    ref,
+    adapter: "codex",
+    session: "B",
+    async deliver(batch: Notification[]) {
+      received.push(...batch);
+    },
+  };
   await consumeMailbox(options);
-  const event = await sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "aliases", files: ["./shared.txt", "shared.txt", ".//./shared.txt"] });
+  const event = await sendMessage({
+    cwd: f.a,
+    adapter: "cc",
+    session: "A",
+    text: "aliases",
+    files: ["./shared.txt", "shared.txt", ".//./shared.txt"],
+  });
   assert.deepEqual(event.files, ["shared.txt"]);
   // Old producers may have persisted aliases before normalization was introduced.
   const repo = await repository(f.a);
-  await writeFile(join(repo.directory, "events", `${event.id}.json`), JSON.stringify({ ...event, files: ["./shared.txt"] }));
+  await writeFile(
+    join(repo.directory, "events", `${event.id}.json`),
+    JSON.stringify({ ...event, files: ["./shared.txt"] }),
+  );
   await consumeMailbox(options);
   assert.equal(received[0]?.event.id, event.id);
   await consumeMailbox(options);
   assert.equal(received.length, 1);
-  for (const file of [".", "./", "src/", "./../secret", "src/../shared.txt", "/shared.txt", "C:\\shared.txt", "./C:/shared.txt"]) {
-    await assert.rejects(sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "invalid", files: [file] }), /repository-relative/);
+  for (const file of [
+    ".",
+    "./",
+    "src/",
+    "./../secret",
+    "src/../shared.txt",
+    "/shared.txt",
+    "C:\\shared.txt",
+    "./C:/shared.txt",
+  ]) {
+    await assert.rejects(
+      sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "invalid", files: [file] }),
+      /repository-relative/,
+    );
   }
 });
 
@@ -154,7 +263,15 @@ test("Unix backslashes in filenames remain literal", { skip: process.platform ==
 test("bounded batches leave remaining messages for the next check", async (t) => {
   const f = await fixture(t);
   const received: string[] = [];
-  const options = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver(batch: Notification[]) { received.push(...batch.map((n) => n.event.id)); } };
+  const options = {
+    cwd: f.b,
+    ref,
+    adapter: "codex",
+    session: "B",
+    async deliver(batch: Notification[]) {
+      received.push(...batch.map((n) => n.event.id));
+    },
+  };
   await consumeMailbox(options);
   for (let i = 0; i < 41; i++) await sendMessage({ cwd: f.a, adapter: "codex", session: "A", text: `message ${i}` });
   const expected = (await eventsIn(await repository(f.b))).map((event) => event.id);
@@ -169,7 +286,15 @@ test("bounded batches leave remaining messages for the next check", async (t) =>
 test("confirmed payloads are skipped in session scans, but publication recovery and GC validate them", async (t) => {
   const f = await fixture(t);
   let delivered = 0;
-  const b = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver() { delivered++; } };
+  const b = {
+    cwd: f.b,
+    ref,
+    adapter: "codex",
+    session: "B",
+    async deliver() {
+      delivered++;
+    },
+  };
   const c = { ...b, cwd: f.c, session: "C" };
   await consumeMailbox(b);
   await consumeMailbox(c);
@@ -187,7 +312,10 @@ test("confirmed payloads are skipped in session scans, but publication recovery 
   await assert.rejects(consumeMailbox(b), /Invalid shared event/);
   assert.equal(await readFile(receiptPath, "utf8"), receipt);
   // A daemon has no subscriber receipt to establish the payload's kind.
-  await assert.rejects(withLock(join(repo.directory, "publish.lock"), () => synchronizeRef(repo, ref, b)), /Invalid shared event/);
+  await assert.rejects(
+    withLock(join(repo.directory, "publish.lock"), () => synchronizeRef(repo, ref, b)),
+    /Invalid shared event/,
+  );
   await assert.rejects(consumeMailbox(c), /Invalid shared event/);
   await assert.rejects(eventsIn(repo), /Invalid shared event/);
   await assert.rejects(collectGarbage(f.b, { apply: true, retentionDays: 0 }), /Invalid shared event/);
@@ -200,7 +328,15 @@ test("confirmed payloads are skipped in session scans, but publication recovery 
 test("receipt filtering validates contents and notices deletion without a process restart", async (t) => {
   const f = await fixture(t);
   let delivered = 0;
-  const options = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver() { delivered++; } };
+  const options = {
+    cwd: f.b,
+    ref,
+    adapter: "codex",
+    session: "B",
+    async deliver() {
+      delivered++;
+    },
+  };
   await consumeMailbox(options);
   const event = await sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "pending" });
   await consumeMailbox(options);
@@ -208,7 +344,11 @@ test("receipt filtering validates contents and notices deletion without a proces
   const key = sessionKey(repo, options, ref);
   const path = join(repo.directory, "receipts", key, `${event.id}.json`);
   const receipt = JSON.parse(await readFile(path, "utf8"));
-  for (const invalid of [{ ...receipt, eventId: "wrong" }, { ...receipt, status: "unknown" }, { ...receipt, at: "invalid" }]) {
+  for (const invalid of [
+    { ...receipt, eventId: "wrong" },
+    { ...receipt, status: "unknown" },
+    { ...receipt, at: "invalid" },
+  ]) {
     await writeFile(path, JSON.stringify(invalid));
     await assert.rejects(consumeMailbox(options), /Invalid receipt/);
     assert.equal(delivered, 1);
@@ -232,7 +372,12 @@ test("repo identity is shared across worktrees but not across separate clones", 
   const clone = await repository(join(f.root, "clone"));
   assert.notEqual(a.id, clone.id);
   await consumeMailbox({ cwd: f.b, ref, adapter: "codex", session: "B", async deliver() {} });
-  const message = await sendMessage({ cwd: clone.root, adapter: "codex", session: "clone", text: "must not cross clones" });
+  const message = await sendMessage({
+    cwd: clone.root,
+    adapter: "codex",
+    session: "clone",
+    text: "must not cross clones",
+  });
   assert.equal(message.recipients.length, 0);
 });
 
@@ -249,7 +394,15 @@ test("legacy cursors migrate without being deleted and queued delivery is acknow
   await f.commit(f.main, "shared.txt", "upstream\n");
   let received = 0;
   let accepted = false;
-  const options = { cwd: f.b, ref, ...identity, async deliver() { received++; return accepted; } };
+  const options = {
+    cwd: f.b,
+    ref,
+    ...identity,
+    async deliver() {
+      received++;
+      return accepted;
+    },
+  };
   await consumeMailbox(options);
   await consumeMailbox(options);
   assert.equal(received, 2);
@@ -265,7 +418,15 @@ test("rewind followed by the same forward update creates a new event rather than
   const f = await fixture(t);
   await writeFile(join(f.b, "shared.txt"), "local\n");
   const received: string[] = [];
-  const options = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver(batch: Notification[]) { received.push(...batch.map((n) => n.event.id)); } };
+  const options = {
+    cwd: f.b,
+    ref,
+    adapter: "codex",
+    session: "B",
+    async deliver(batch: Notification[]) {
+      received.push(...batch.map((n) => n.event.id));
+    },
+  };
   await consumeMailbox(options);
   const next = await f.commit(f.main, "shared.txt", "upstream\n");
   await consumeMailbox(options);
@@ -279,15 +440,32 @@ test("rewind followed by the same forward update creates a new event rather than
 
 test("message validation and cancellation do not advance receipts", async (t) => {
   const f = await fixture(t);
-  await assert.rejects(sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "bad", files: ["../secret"] }), /repository-relative/);
+  await assert.rejects(
+    sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "bad", files: ["../secret"] }),
+    /repository-relative/,
+  );
   await assert.rejects(sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "x".repeat(65 * 1024) }), /64 KiB/);
   const options = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver() {} };
   await consumeMailbox(options);
   await sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "pending" });
   const abort = new AbortController();
-  await assert.rejects(consumeMailbox({ ...options, signal: abort.signal, async deliver() { abort.abort(); } }), /abort/i);
+  await assert.rejects(
+    consumeMailbox({
+      ...options,
+      signal: abort.signal,
+      async deliver() {
+        abort.abort();
+      },
+    }),
+    /abort/i,
+  );
   let count = 0;
-  await consumeMailbox({ ...options, async deliver() { count++; } });
+  await consumeMailbox({
+    ...options,
+    async deliver() {
+      count++;
+    },
+  });
   assert.equal(count, 1);
 });
 
@@ -295,12 +473,25 @@ test("cancellation while awaiting delivery confirmation preserves the event and 
   const f = await fixture(t);
   const recipient = { cwd: f.b, ref, adapter: "test", session: "recipient", async deliver() {} };
   await consumeMailbox(recipient);
-  const repo = await repository(f.b), key = sessionKey(repo, recipient, ref);
+  const repo = await repository(f.b),
+    key = sessionKey(repo, recipient, ref);
   for (const result of [true, false]) {
     const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: `confirmation ${result}` });
     const abort = new AbortController();
-    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
-    const pending = consumeMailbox({ ...recipient, signal: abort.signal, async isDelivered() { entered.resolve(); await release.promise; return result; }, async deliver() { assert.fail("cancelled confirmation must not deliver"); } });
+    const entered = Promise.withResolvers<void>(),
+      release = Promise.withResolvers<void>();
+    const pending = consumeMailbox({
+      ...recipient,
+      signal: abort.signal,
+      async isDelivered() {
+        entered.resolve();
+        await release.promise;
+        return result;
+      },
+      async deliver() {
+        assert.fail("cancelled confirmation must not deliver");
+      },
+    });
     await entered.promise;
     abort.abort();
     release.resolve();
@@ -309,7 +500,12 @@ test("cancellation while awaiting delivery confirmation preserves the event and 
     await assert.rejects(stat(join(repo.directory, "sessions", `${key}.lock`)), { code: "ENOENT" });
     await assert.rejects(stat(join(repo.directory, "publish.lock")), { code: "ENOENT" });
     let count = 0;
-    await consumeMailbox({ ...recipient, async deliver() { count++; } });
+    await consumeMailbox({
+      ...recipient,
+      async deliver() {
+        count++;
+      },
+    });
     assert.equal(count, 1);
   }
 });
@@ -318,12 +514,30 @@ test("cancellation while awaiting pending delivery inspection preserves the even
   const f = await fixture(t);
   const recipient = { cwd: f.b, ref, adapter: "test", session: "recipient", async deliver() {} };
   await consumeMailbox(recipient);
-  const repo = await repository(f.b), key = sessionKey(repo, recipient, ref);
+  const repo = await repository(f.b),
+    key = sessionKey(repo, recipient, ref);
   for (const result of [true, false]) {
-    const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: `pending inspection ${result}` });
+    const event = await sendMessage({
+      cwd: f.a,
+      adapter: "test",
+      session: "sender",
+      text: `pending inspection ${result}`,
+    });
     const abort = new AbortController();
-    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
-    const pending = consumeMailbox({ ...recipient, signal: abort.signal, async isPending() { entered.resolve(); await release.promise; return result; }, async deliver() { assert.fail("cancelled inspection must not deliver"); } });
+    const entered = Promise.withResolvers<void>(),
+      release = Promise.withResolvers<void>();
+    const pending = consumeMailbox({
+      ...recipient,
+      signal: abort.signal,
+      async isPending() {
+        entered.resolve();
+        await release.promise;
+        return result;
+      },
+      async deliver() {
+        assert.fail("cancelled inspection must not deliver");
+      },
+    });
     await entered.promise;
     abort.abort();
     release.resolve();
@@ -332,7 +546,12 @@ test("cancellation while awaiting pending delivery inspection preserves the even
     await assert.rejects(stat(join(repo.directory, "sessions", `${key}.lock`)), { code: "ENOENT" });
     await assert.rejects(stat(join(repo.directory, "publish.lock")), { code: "ENOENT" });
     let count = 0;
-    await consumeMailbox({ ...recipient, async deliver() { count++; } });
+    await consumeMailbox({
+      ...recipient,
+      async deliver() {
+        count++;
+      },
+    });
     assert.equal(count, 1);
   }
 });
@@ -341,19 +560,32 @@ test("cancellation during receipt preparation does not commit any receipt", asyn
   const f = await fixture(t);
   const recipient = { cwd: f.b, ref, adapter: "test", session: "recipient", async deliver() {} };
   await consumeMailbox(recipient);
-  const repo = await repository(f.b), key = sessionKey(repo, recipient, ref), directory = join(repo.directory, "receipts", key);
+  const repo = await repository(f.b),
+    key = sessionKey(repo, recipient, ref),
+    directory = join(repo.directory, "receipts", key);
   for (const mode of ["known", "irrelevant", "accepted"] as const) {
-    const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: mode, files: mode === "irrelevant" ? ["shared.txt"] : [] });
-    const receipt = join(directory, `${event.id}.json`), abort = new AbortController();
+    const event = await sendMessage({
+      cwd: f.a,
+      adapter: "test",
+      session: "sender",
+      text: mode,
+      files: mode === "irrelevant" ? ["shared.txt"] : [],
+    });
+    const receipt = join(directory, `${event.id}.json`),
+      abort = new AbortController();
     const originalOpen = fs.promises.open;
-    let cancelled = false, delivered = 0;
+    let cancelled = false,
+      delivered = 0;
     fs.promises.open = (async (path: any, ...args: any[]) => {
       const handle = await (originalOpen as any)(path, ...args);
       if (String(path).startsWith(`${receipt}.`)) {
         const originalWrite = handle.writeFile.bind(handle);
         handle.writeFile = async (...writeArgs: any[]) => {
           const result = await originalWrite(...writeArgs);
-          if (!cancelled) { cancelled = true; abort.abort(); }
+          if (!cancelled) {
+            cancelled = true;
+            abort.abort();
+          }
           return result;
         };
       }
@@ -361,14 +593,32 @@ test("cancellation during receipt preparation does not commit any receipt", asyn
     }) as typeof fs.promises.open;
     syncBuiltinESMExports();
     try {
-      await assert.rejects(consumeMailbox({ ...recipient, signal: abort.signal, isDelivered: mode === "known" ? async () => true : undefined, async deliver() { delivered++; } }), /abort/i);
-    } finally { fs.promises.open = originalOpen; syncBuiltinESMExports(); }
+      await assert.rejects(
+        consumeMailbox({
+          ...recipient,
+          signal: abort.signal,
+          isDelivered: mode === "known" ? async () => true : undefined,
+          async deliver() {
+            delivered++;
+          },
+        }),
+        /abort/i,
+      );
+    } finally {
+      fs.promises.open = originalOpen;
+      syncBuiltinESMExports();
+    }
     assert.equal(cancelled, true, mode);
     assert.equal(delivered, mode === "accepted" ? 1 : 0, mode);
     await assert.rejects(stat(receipt), { code: "ENOENT" });
-    assert.ok(!(await readdir(directory)).some((name) => name.startsWith(`${event.id}.json.`) && name.endsWith(".tmp")));
+    assert.ok(
+      !(await readdir(directory)).some((name) => name.startsWith(`${event.id}.json.`) && name.endsWith(".tmp")),
+    );
     await assert.rejects(stat(join(repo.directory, "sessions", `${key}.lock`)), { code: "ENOENT" });
     await consumeMailbox(recipient);
-    assert.equal((await readFile(receipt, "utf8")).includes(`"status":"${mode === "irrelevant" ? "irrelevant" : "delivered"}"`), true);
+    assert.equal(
+      (await readFile(receipt, "utf8")).includes(`"status":"${mode === "irrelevant" ? "irrelevant" : "delivered"}"`),
+      true,
+    );
   }
 });

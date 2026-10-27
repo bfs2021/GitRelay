@@ -8,7 +8,22 @@ import { syncBranch } from "../dist/core/branch-sync.js";
 const temporary = await mkdtemp(join(tmpdir(), "git-relay-sync-bench-"));
 const previousState = process.env.WORKTREE_SYNC_STATE_DIR;
 process.env.WORKTREE_SYNC_STATE_DIR = join(temporary, "state");
-const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, "-c", "user.name=Benchmark", "-c", "user.email=benchmark@example.test", "-c", "commit.gpgsign=false", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+const git = (cwd, ...args) =>
+  execFileSync(
+    "git",
+    [
+      "-C",
+      cwd,
+      "-c",
+      "user.name=Benchmark",
+      "-c",
+      "user.email=benchmark@example.test",
+      "-c",
+      "commit.gpgsign=false",
+      ...args,
+    ],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  ).trim();
 try {
   const main = join(temporary, "main");
   const receiver = join(temporary, "receiver");
@@ -32,7 +47,15 @@ try {
     assert.equal(git(receiver, "status", "--porcelain"), "");
     if (i) samples.push(elapsed);
   }
-  console.log(JSON.stringify({ node: process.version, git: git(main, "--version"), samples: samples.length, medianMs: samples.sort((a, b) => a - b)[3], workload: "up-to-date linked worktree with local file remote; one warm-up and setup excluded" }));
+  console.log(
+    JSON.stringify({
+      node: process.version,
+      git: git(main, "--version"),
+      samples: samples.length,
+      medianMs: samples.sort((a, b) => a - b)[3],
+      workload: "up-to-date linked worktree with local file remote; one warm-up and setup excluded",
+    }),
+  );
 } finally {
   if (previousState === undefined) delete process.env.WORKTREE_SYNC_STATE_DIR;
   else process.env.WORKTREE_SYNC_STATE_DIR = previousState;

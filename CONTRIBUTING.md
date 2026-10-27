@@ -44,12 +44,16 @@ source files rather than generated output. Do not commit `dist/`,
 Run the same checks as CI before opening a pull request:
 
 ```sh
-npm run typecheck
-npm test
-npm pack --dry-run
+npm run check
 ```
 
-`npm test` rebuilds the project before running the suite. For a focused iteration:
+`npm run format` applies the pinned formatter. Type checking also rejects unused
+locals and parameters. Generated output, vendored sources and historical raw
+acceptance evidence are excluded from formatting.
+
+`check` runs formatting, type checking, release metadata, tests and packaging
+sequentially. Do not run builds, tests or packaging concurrently in one checkout:
+they replace the same `dist/`. For a focused iteration:
 
 ```sh
 npm run build
@@ -57,7 +61,8 @@ node --experimental-strip-types --test tests/cli/package.test.ts
 ```
 
 CI checks Linux and macOS on Node.js 22.19.0 and 24. For performance changes, run
-`npm run benchmark` and report the workload and environment. For Codex plugin
+the [benchmark recorder](docs/performance.md#record-a-reproducible-run) and report
+the workload and environment. For Codex plugin
 packaging changes, run `npm run build:codex-plugin`.
 
 Use disposable repositories and isolated state for manual integration checks.
@@ -78,6 +83,9 @@ In a pull request, explain the problem, the resulting behavior, and validation
 commands with their results. State any checks you could not run. Use a concise
 English commit subject following the existing Conventional Commits style, such
 as `fix(cli): Preserve unread messages on exit`.
+
+See [source releases](docs/releases.md) for version/tag consistency and the
+release acceptance checklist. A normal contribution does not publish a release.
 
 ## License
 

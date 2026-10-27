@@ -17,10 +17,7 @@
     "longDescription": "Enable GitRelay for a requested parallel-development session, receive relevant changes and messages, and inspect branch status. Sessions default off; automatic branch synchronization is unavailable.",
     "developerName": "shenyankm",
     "category": "Developer tools",
-    "capabilities": [
-      "Instructions",
-      "Lifecycle hooks"
-    ],
+    "capabilities": ["Instructions", "Lifecycle hooks"],
     "websiteURL": "https://github.com/shenyankm/GitRelay",
     "defaultPrompt": [
       "Enable GitRelay for parallel development in this session.",
@@ -32,10 +29,5 @@
     "composerIcon": "./assets/logo.svg",
     "logo": "./assets/logo.svg"
   },
-  "keywords": [
-    "git",
-    "worktree",
-    "branch-monitoring",
-    "coding-agent"
-  ]
+  "keywords": ["git", "worktree", "branch-monitoring", "coding-agent"]
 }

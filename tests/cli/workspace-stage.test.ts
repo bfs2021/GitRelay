@@ -26,7 +26,9 @@ test("an EEXIST winner may reference our stage", { skip: process.platform === "w
   const original = fs.promises.symlink;
   const warn = console.warn;
   const warnings: string[] = [];
-  console.warn = (...args) => { warnings.push(args.join(" ")); };
+  console.warn = (...args) => {
+    warnings.push(args.join(" "));
+  };
   fs.promises.symlink = async (target, path, type) => {
     if (String(path) === root) await original(target, path, type);
     return original(target, path, type);
@@ -53,7 +55,9 @@ test("a failed publication preserves files added to the stage", { skip: process.
   const warn = console.warn;
   const warnings: string[] = [];
   let stage = "";
-  console.warn = (...args) => { warnings.push(args.join(" ")); };
+  console.warn = (...args) => {
+    warnings.push(args.join(" "));
+  };
   fs.promises.symlink = async (target, path, type) => {
     if (String(path) !== root) return original(target, path, type);
     stage = join(dirname(root), String(target));
@@ -80,7 +84,9 @@ test("a workspace owner marker collision preserves the original error and data",
   const warn = console.warn;
   const warnings: string[] = [];
   let marker = "";
-  console.warn = (...args) => { warnings.push(args.join(" ")); };
+  console.warn = (...args) => {
+    warnings.push(args.join(" "));
+  };
   fs.promises.writeFile = async (path, data, options) => {
     if (basename(String(path)) === ".git-relay-owner") {
       marker = String(path);
@@ -110,8 +116,12 @@ test("concurrent workspace publication retains the losing stage", { skip: proces
   const warnings: string[] = [];
   const stages: string[] = [];
   let release!: () => void;
-  const bothReady = new Promise<void>((resolve) => { release = resolve; });
-  console.warn = (...args) => { warnings.push(args.join(" ")); };
+  const bothReady = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  console.warn = (...args) => {
+    warnings.push(args.join(" "));
+  };
   fs.promises.symlink = async (target, path, type) => {
     if (String(path) === root) {
       stages.push(join(parent, String(target)));

@@ -4,6 +4,31 @@ These are historical measurements of the named source snapshots. The current
 Codex/OpenCode-only, default-off refactor has not been benchmarked on real hosts.
 Retired-client results are not current support claims.
 
+## Record a reproducible run
+
+Use the committed benchmark scripts and retain a machine-readable result:
+
+```sh
+npm run build
+node scripts/record-benchmark.mjs delivery /absolute/new-delivery-result.json
+node scripts/record-benchmark.mjs mailbox /absolute/new-mailbox-result.json
+```
+
+The recorder supports `delivery`, `mailbox`, `history`, `maintenance` and
+`concurrency`. It records the source commit, dirty status, a content fingerprint,
+OS/Node/Git versions, workload records and raw stdout/stderr. Existing benchmark
+assertions must pass, and the source fingerprint must remain unchanged. Build
+immediately before recording and do not run another build or test concurrently.
+The output must be a new file; keep results and the exact source snapshot in
+durable storage. Temporary paths in the historical sections below are provenance
+references, not guaranteed downloadable artifacts.
+
+One local run is not a before/after comparison. For an optimization claim, run
+alternating baseline/candidate samples with the same workload and environment,
+and state cache conditions, external load and unmeasured boundaries. This
+recorder does not recover missing historical harnesses or establish real-host
+latency, cold-cache behavior or physical disk I/O.
+
 ## Per-ref daemon cache ownership (2026-10-27, Asia/Singapore)
 
 This is a historical measurement of the cache fast path; current consumers
@@ -135,10 +160,10 @@ In an isolated snapshot on the same macOS arm64, Node and Git versions, increasi
 
 A separate synthetic test compared serial trash reads with 32 concurrent reads, alternating the variants 16 times per size in a temporary repository with warm caches. Median synchronization times in milliseconds were:
 
-| Small trash records | 0 | 1 | 10 | 100 | 1,000 |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-| Serial | 16.62 | 14.16 | 14.62 | 22.20 | 87.58 |
-| 32 concurrent | 16.71 | 14.14 | 14.39 | 18.21 | 47.53 |
+| Small trash records |     0 |     1 |    10 |   100 | 1,000 |
+| ------------------: | ----: | ----: | ----: | ----: | ----: |
+|              Serial | 16.62 | 14.16 | 14.62 | 22.20 | 87.58 |
+|       32 concurrent | 16.71 | 14.14 | 14.39 | 18.21 | 47.53 |
 
 The experiment showed little difference at 0–10 records and a larger benefit with accumulated trash. It does not establish how often such backlogs occur in actual use; 32 concurrent 2 MiB state reads could also require roughly 64 MiB of buffers before overhead, compared with one at a time. Tests checked first-error ordering for two corrupt files, preservation of their bytes and the cursor, and cancellation before the scan. Cancellation during reads and the lock remaining held until an entire concurrent batch settles were not fault-injected. The concurrent implementation was not adopted.
 
@@ -176,13 +201,13 @@ Fixed scenario:
 2026-10-25 UTC, macOS arm64, Node `22.23.2`, Git `2.54.0 (Apple Git-157)`. Values are rounded milliseconds.
 
 | Retained events | Daemon | Median empty poll, 3 sessions | Recover 32, 1 session |
-| ---: | :---: | ---: | ---: |
-| 100 | Off | 224 | 518 |
-| 100 | On | 332 | 418 |
-| 1,000 | Off | 1,156 | 588 |
-| 1,000 | On | 401 | 466 |
-| 10,000 | Off | 4,398 | 4,620 |
-| 10,000 | On | 4,212 | 7,314 |
+| --------------: | :----: | ----------------------------: | --------------------: |
+|             100 |  Off   |                           224 |                   518 |
+|             100 |   On   |                           332 |                   418 |
+|           1,000 |  Off   |                         1,156 |                   588 |
+|           1,000 |   On   |                           401 |                   466 |
+|          10,000 |  Off   |                         4,398 |                 4,620 |
+|          10,000 |   On   |                         4,212 |                 7,314 |
 
 The preceding run on the same machine measured 4,178 / 4,116 ms for 10,000-event empty polling and 4,534 / 4,525 ms for recovery. Background load and disk caches cause variation. Recovery is a single measurement, not evidence that the daemon is always faster.
 
@@ -191,13 +216,13 @@ The preceding run on the same machine measured 4,178 / 4,116 ms for 10,000-event
 Same machine, runtime, script, and dataset sizes; no benchmark change or reduction in retained events. Values are milliseconds to one decimal place.
 
 | Retained events | Daemon | Empty poll before | Empty poll after | Recover 32 before | Recover 32 after |
-| ---: | :---: | ---: | ---: | ---: | ---: |
-| 100 | Off | 137.8 | 119.1 | 173.7 | 164.4 |
-| 100 | On | 82.9 | 60.5 | 108.0 | 119.7 |
-| 1,000 | Off | 465.4 | 255.4 | 522.2 | 284.4 |
-| 1,000 | On | 419.3 | 116.3 | 463.9 | 178.0 |
-| 10,000 | Off | 4,065.2 | 846.8 | 4,443.4 | 1,026.0 |
-| 10,000 | On | 4,086.0 | 767.6 | 4,374.2 | 984.2 |
+| --------------: | :----: | ----------------: | ---------------: | ----------------: | ---------------: |
+|             100 |  Off   |             137.8 |            119.1 |             173.7 |            164.4 |
+|             100 |   On   |              82.9 |             60.5 |             108.0 |            119.7 |
+|           1,000 |  Off   |             465.4 |            255.4 |             522.2 |            284.4 |
+|           1,000 |   On   |             419.3 |            116.3 |             463.9 |            178.0 |
+|          10,000 |  Off   |           4,065.2 |            846.8 |           4,443.4 |          1,026.0 |
+|          10,000 |   On   |           4,086.0 |            767.6 |           4,374.2 |            984.2 |
 
 A repeat after optimization measured 774.1 / 865.2 ms for 10,000-event empty polling (daemon off/on) and 1,139.8 / 1,079.3 ms for recovery. Both runs passed deduplication, receipt, unread-recovery, and daemon-liveness assertions. Empty polling improved about 79–81%, recovery about 74–78%; smaller recovery cases varied, so not every scenario is claimed faster.
 
@@ -215,13 +240,13 @@ At this measurement, `readJson` used the standard library's callback-backed `fs.
 Measured against commit `c8e732c` on macOS arm64, Node `22.23.2`, Git `2.54.0 (Apple Git-157)`, using the unchanged benchmark above. Values are milliseconds; before and after are separate runs with the same dataset sizes.
 
 | Retained events | Daemon | Empty poll before | Empty poll after | Recover 32 before | Recover 32 after |
-| ---: | :---: | ---: | ---: | ---: | ---: |
-| 100 | Off | 132.5 | 111.4 | 162.5 | 155.5 |
-| 100 | On | 75.7 | 63.8 | 95.7 | 100.9 |
-| 1,000 | Off | 159.5 | 200.9 | 240.2 | 277.3 |
-| 1,000 | On | 114.1 | 105.3 | 187.1 | 144.7 |
-| 10,000 | Off | 784.3 | 672.1 | 1,078.3 | 891.9 |
-| 10,000 | On | 776.7 | 674.8 | 913.2 | 768.5 |
+| --------------: | :----: | ----------------: | ---------------: | ----------------: | ---------------: |
+|             100 |  Off   |             132.5 |            111.4 |             162.5 |            155.5 |
+|             100 |   On   |              75.7 |             63.8 |              95.7 |            100.9 |
+|           1,000 |  Off   |             159.5 |            200.9 |             240.2 |            277.3 |
+|           1,000 |   On   |             114.1 |            105.3 |             187.1 |            144.7 |
+|          10,000 |  Off   |             784.3 |            672.1 |           1,078.3 |            891.9 |
+|          10,000 |   On   |             776.7 |            674.8 |             913.2 |            768.5 |
 
 A second optimized run measured 630.4 / 713.5 ms for 10,000-event empty polling (daemon off/on), and 813.6 / 923.2 ms for recovery. Relative to the baseline run, large-backlog empty polling took about 8–20% less time across these runs. Recovery and smaller cases varied; this is not evidence of a speedup in every scenario or runtime. All three benchmark runs passed their delivery, deduplication, receipt-persistence, and daemon-liveness assertions.
 
@@ -241,10 +266,10 @@ It creates an isolated temporary repository and receiver worktree, retains 10, 1
 The comparison uses the same local runtime as the small-file benchmark. The baseline already includes that optimization; only the history-reading change differs.
 
 | Commits | Serial reads, ms | Four concurrent reads, ms | Less elapsed time |
-| ---: | ---: | ---: | ---: |
-| 10 | 182.2 | 105.7 | 42% |
-| 100 | 903.7 | 423.9 | 53% |
-| 500 | 4,008.9 | 1,230.2 | 69% |
+| ------: | ---------------: | ------------------------: | ----------------: |
+|      10 |            182.2 |                     105.7 |               42% |
+|     100 |            903.7 |                     423.9 |               53% |
+|     500 |          4,008.9 |                   1,230.2 |               69% |
 
 A repeat optimized run measured 109.6, 341.7, and 1,281.1 ms respectively and passed all assertions. The 500-commit case took about 68–69% less time across the two optimized runs relative to the baseline.
 
@@ -278,10 +303,10 @@ Reproduce with `npm run build` followed by `node scripts/benchmark-history.mjs`.
 Both sides below use this same updated fixture and the concurrent worktree reads from the preceding section. The baseline restores only the previous four-at-a-time, per-commit history implementation. Same macOS arm64, Node `22.23.2`, Git `2.54.0 (Apple Git-157)`; times are median milliseconds from three inspections at each size.
 
 | Commits | Per-commit baseline | Batched run 1 | Batched run 2 |
-| ---: | ---: | ---: | ---: |
-| 10 | 86.3 | 84.4 | 70.2 |
-| 100 | 294.6 | 102.2 | 102.0 |
-| 500 | 1,405.3 | 251.3 | 251.2 |
+| ------: | ------------------: | ------------: | ------------: |
+|      10 |                86.3 |          84.4 |          70.2 |
+|     100 |               294.6 |         102.2 |         102.0 |
+|     500 |             1,405.3 |         251.3 |         251.2 |
 
 The 500-commit scenario took about 82% less elapsed time in both runs. All three runs completed their ordering, overlap, reverted-edit, and patch assertions and cleaned up successfully. These results concern filename inspection in a small repository, not arbitrary large patches or cold caches.
 
@@ -298,12 +323,12 @@ This isolated fixture stores 100 then 1,000 valid session records and the same n
 
 Same macOS arm64, Node `22.23.2`, Git `2.54.0 (Apple Git-157)` as above. All three runs used the identical script and completed successfully. Values are milliseconds.
 
-| Sessions / events | Operation | Before | After 1 | After 2 |
-| ---: | --- | ---: | ---: | ---: |
-| 100 | Session discovery | 5.4 | 1.9 | 1.7 |
-| 100 | Retained-event GC | 82.8 | 67.1 | 62.4 |
-| 1,000 | Session discovery | 98.8 | 20.8 | 19.0 |
-| 1,000 | Retained-event GC | 813.8 | 646.7 | 629.6 |
+| Sessions / events | Operation         | Before | After 1 | After 2 |
+| ----------------: | ----------------- | -----: | ------: | ------: |
+|               100 | Session discovery |    5.4 |     1.9 |     1.7 |
+|               100 | Retained-event GC |   82.8 |    67.1 |    62.4 |
+|             1,000 | Session discovery |   98.8 |    20.8 |    19.0 |
+|             1,000 | Retained-event GC |  813.8 |   646.7 |   629.6 |
 
 Session discovery reads at most 32 records concurrently, preserves directory order, validates each record, and settles the whole batch before propagating an error. At 1,000 sessions this reduced elapsed time by about 79–81%.
 
@@ -321,13 +346,13 @@ This benchmark runs 1, 4, then 8 independent CLI processes with separate session
 Same local macOS/Node/Git versions as above. Median group completion time over three idle rounds, milliseconds. The final validation run additionally exercised the untimed zero-retention deletion race described below.
 
 | CLI processes | Daemon | Run 1 | Run 2 | Validation run |
-| ---: | :---: | ---: | ---: | ---: |
-| 1 | Off | 96.8 | 80.4 | 91.5 |
-| 1 | On | 89.1 | 78.8 | 80.5 |
-| 4 | Off | 204.4 | 178.1 | 197.3 |
-| 4 | On | 121.2 | 124.2 | 132.6 |
-| 8 | Off | 308.6 | 315.1 | 330.2 |
-| 8 | On | 189.0 | 180.6 | 203.3 |
+| ------------: | :----: | ----: | ----: | -------------: |
+|             1 |  Off   |  96.8 |  80.4 |           91.5 |
+|             1 |   On   |  89.1 |  78.8 |           80.5 |
+|             4 |  Off   | 204.4 | 178.1 |          197.3 |
+|             4 |   On   | 121.2 | 124.2 |          132.6 |
+|             8 |  Off   | 308.6 | 315.1 |          330.2 |
+|             8 |   On   | 189.0 | 180.6 |          203.3 |
 
 Every process then recovers eight revoked receipts, with assertions for exact event IDs, no duplicate delivery on the next poll, and persisted successful receipts. Eight-process recovery took 308–321 ms without the daemon and 201–240 ms with it. These are concurrent group completion times, not per-process averages.
 
@@ -387,10 +412,10 @@ This macOS-only benchmark requires `clang`, Node.js 22.19+ and Git. It compiles 
 On macOS arm64, Node `22.23.2` and Git `2.54.0 (Apple Git-157)`, the five-sample medians were:
 
 | CLI operation | Wall time | User / system CPU | Peak physical footprint | Disk read / write accounting | Logical writes |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `--help` | 33.63 ms | 28.56 / 5.66 ms | 16,943,168 B | 0 / 0 B | 0 B |
-| `send` | 55.47 ms | 32.70 / 8.26 ms | 18,352,696 B | 0 / 12,288 B | 172,032 B |
-| `check` | 75.92 ms | 36.10 / 10.73 ms | 18,762,320 B | 0 / 24,576 B | 303,104 B |
+| ------------- | --------: | ----------------: | ----------------------: | ---------------------------: | -------------: |
+| `--help`      |  33.63 ms |   28.56 / 5.66 ms |            16,943,168 B |                      0 / 0 B |            0 B |
+| `send`        |  55.47 ms |   32.70 / 8.26 ms |            18,352,696 B |                 0 / 12,288 B |      172,032 B |
+| `check`       |  75.92 ms |  36.10 / 10.73 ms |            18,762,320 B |                 0 / 24,576 B |      303,104 B |
 
 Median send start through check completion was 136.32 ms. The positive control reported 1,048,576 bytes of disk writes and 1,089,536 logical write bytes. The compiled JavaScript fingerprint was `f4ea0fad0941157cdb39f271969e076bccfa5ef91bc221894038b2f6d7dd41e5`. Individual samples, including variable logical-write accounting, are emitted as JSON. Other work was running concurrently; these are not a controlled before/after comparison and do not identify a specific optimization.
 
@@ -407,15 +432,15 @@ The counters describe only the direct Node process, not the Git subprocesses it 
 
 The completed audit uses the original stopping criterion: pursue reproducible gains in reasonable project workloads while preserving correctness, and stop when no further demonstrated gain justifies added complexity. It does not claim a mathematical optimum for every machine or input.
 
-| Area | Final evidence | Remaining cost / decision |
-| --- | --- | --- |
-| Mailbox polling and recovery | All 100/1,000/10,000-event assertions passed. At 10,000 events, three-session empty polling measured 650.3/600.5 ms and 32-message recovery 832.1/765.2 ms, daemon off/on. | Directory and receipt validation remains linear. Skipping validation or introducing a persistent index would change the integrity/design tradeoff; not justified by these runs. |
-| Upstream history | Ordered commits, intermediate reverts, merges, unusual names, snapshots, malformed output and oversized combined output are covered. Final 500-commit median: 237.4 ms. | Batched Git reads retain the existing per-commit size boundary; the overflow path preserves four-process concurrency and waits for all children. |
-| Worktree relevance | Exact filename and prefix assertions passed through 100,000 ignored files; final large-tree median 124.7 ms. | Exact file relevance is retained rather than broadening matches or omitting ignored paths. |
-| Session discovery and GC | Final 1,000-record scan 16.7 ms; 1,000-event retained GC 593.7 ms. Corruption, migration refresh, unread preservation and journal cleanup assertions passed. | Session validation is reused only under the publication lock. Receipts and recipient locks remain independent per event. |
-| Concurrent processes | Independent CLI groups through eight processes passed empty polling, recovery, deduplication, receipt persistence and concurrent deletion/retry assertions. Final eight-process idle median 321.1/175.5 ms, daemon off/on. | Busy consumers may skip a poll and recover later. Lock backoff/ownership checks are retained. |
-| Pi native history | Final 10,000-entry/1,000-receipt recovery median 205.8 ms; one native branch traversal per scan. Actual SDK tests cover append during a scan and branch rewind. | Cache lifetime is one check and invalidation uses both leaf and session IDs. No live-host latency claim. |
-| Auto-sync | All seven operation markers, dirty/ignored work, divergence and fetch failures are covered; local-remote medians 140.1/139.8 ms. | Fresh status and HEAD checks around fetch/merge remain; network latency is outside this local comparison. |
+| Area                         | Final evidence                                                                                                                                                                                                             | Remaining cost / decision                                                                                                                                                       |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mailbox polling and recovery | All 100/1,000/10,000-event assertions passed. At 10,000 events, three-session empty polling measured 650.3/600.5 ms and 32-message recovery 832.1/765.2 ms, daemon off/on.                                                 | Directory and receipt validation remains linear. Skipping validation or introducing a persistent index would change the integrity/design tradeoff; not justified by these runs. |
+| Upstream history             | Ordered commits, intermediate reverts, merges, unusual names, snapshots, malformed output and oversized combined output are covered. Final 500-commit median: 237.4 ms.                                                    | Batched Git reads retain the existing per-commit size boundary; the overflow path preserves four-process concurrency and waits for all children.                                |
+| Worktree relevance           | Exact filename and prefix assertions passed through 100,000 ignored files; final large-tree median 124.7 ms.                                                                                                               | Exact file relevance is retained rather than broadening matches or omitting ignored paths.                                                                                      |
+| Session discovery and GC     | Final 1,000-record scan 16.7 ms; 1,000-event retained GC 593.7 ms. Corruption, migration refresh, unread preservation and journal cleanup assertions passed.                                                               | Session validation is reused only under the publication lock. Receipts and recipient locks remain independent per event.                                                        |
+| Concurrent processes         | Independent CLI groups through eight processes passed empty polling, recovery, deduplication, receipt persistence and concurrent deletion/retry assertions. Final eight-process idle median 321.1/175.5 ms, daemon off/on. | Busy consumers may skip a poll and recover later. Lock backoff/ownership checks are retained.                                                                                   |
+| Pi native history            | Final 10,000-entry/1,000-receipt recovery median 205.8 ms; one native branch traversal per scan. Actual SDK tests cover append during a scan and branch rewind.                                                            | Cache lifetime is one check and invalidation uses both leaf and session IDs. No live-host latency claim.                                                                        |
+| Auto-sync                    | All seven operation markers, dirty/ignored work, divergence and fetch failures are covered; local-remote medians 140.1/139.8 ms.                                                                                           | Fresh status and HEAD checks around fetch/merge remain; network latency is outside this local comparison.                                                                       |
 
 The final source review also checked hook input limits, pi/OpenCode polling overlap guards, daemon liveness/fallback, Git subprocess time/output limits, and state/lock failure cleanup. No dependency, public API signature, persistent state format, retention rule, acknowledgement requirement, or opt-in sync behavior changed. Network/host-bound calls and integrity checks were not replaced with stale caches.
 
@@ -429,14 +454,14 @@ The state reader opens the path nonblocking, verifies that the opened descriptor
 
 Two alternating runs of `scripts/benchmark.mjs` compared identical isolated builds with only the compiled state reader changed. The macOS arm64 host used Node `22.23.2`, Git `2.54.0`, three sessions, retained events and warm filesystem caches; other tasks were running concurrently. Values are milliseconds, and each range contains two runs:
 
-| Events / daemon | Three-session empty poll before | After | Recover 32 before | After |
-| --- | ---: | ---: | ---: | ---: |
-| 100 / off | 89.1–234.3 | 99.2–106.2 | 125.8–313.6 | 154.4–255.7 |
-| 100 / on | 48.0–126.9 | 55.8–63.9 | 71.2–129.1 | 80.0–85.0 |
-| 1,000 / off | 146.8–202.8 | 171.4–194.1 | 202.3–249.9 | 308.9–385.1 |
-| 1,000 / on | 92.8–102.8 | 113.6–124.1 | 129.6–153.0 | 153.8–163.2 |
-| 10,000 / off | 636.2–779.3 | 882.7–963.8 | 1,141.3–1,269.9 | 1,105.1–1,179.2 |
-| 10,000 / on | 739.3–1,208.4 | 876.1–948.2 | 859.8–1,093.9 | 1,185.2–1,238.4 |
+| Events / daemon | Three-session empty poll before |       After | Recover 32 before |           After |
+| --------------- | ------------------------------: | ----------: | ----------------: | --------------: |
+| 100 / off       |                      89.1–234.3 |  99.2–106.2 |       125.8–313.6 |     154.4–255.7 |
+| 100 / on        |                      48.0–126.9 |   55.8–63.9 |        71.2–129.1 |       80.0–85.0 |
+| 1,000 / off     |                     146.8–202.8 | 171.4–194.1 |       202.3–249.9 |     308.9–385.1 |
+| 1,000 / on      |                      92.8–102.8 | 113.6–124.1 |       129.6–153.0 |     153.8–163.2 |
+| 10,000 / off    |                     636.2–779.3 | 882.7–963.8 |   1,141.3–1,269.9 | 1,105.1–1,179.2 |
+| 10,000 / on     |                   739.3–1,208.4 | 876.1–948.2 |     859.8–1,093.9 | 1,185.2–1,238.4 |
 
 All benchmark self-checks passed for delivery, deduplication, receipts and daemon liveness. Some cases show additional elapsed time, especially the 10,000-event empty poll without the daemon, but load and cache variation prevent a stable percentage claim. A separate 2,000-file callback prototype did not show a consistent gain sufficient to justify substantially more error-handling code; the bounded reader remains in use. These measurements do not cover Windows, cold caches, network filesystems or complete agent/model latency. An external process can still replace a path after the descriptor has opened; the current read then observes the already-open file, not an atomic snapshot of later path changes.
 
@@ -535,10 +560,10 @@ recipients, and warm local filesystem caches. Each timing used a separate copy
 of the state; setup and module imports were excluded.
 
 | Retained events | Existing median | Always-sync median | Approximate reciprocal throughput |
-| --- | ---: | ---: | ---: |
-| 0 | 15.213 ms | 29.779 ms | 65.7 → 33.6 calls/s |
-| 500 | 26.508 ms | 40.062 ms | 37.7 → 25.0 calls/s |
-| 2,000 | 62.845 ms | 106.291 ms | 15.9 → 9.4 calls/s |
+| --------------- | --------------: | -----------------: | --------------------------------: |
+| 0               |       15.213 ms |          29.779 ms |               65.7 → 33.6 calls/s |
+| 500             |       26.508 ms |          40.062 ms |               37.7 → 25.0 calls/s |
+| 2,000           |       62.845 ms |         106.291 ms |                15.9 → 9.4 calls/s |
 
 Median Node process user CPU for the three sizes was 1.618/15.116/44.210 ms
 before and 2.671/26.148/81.671 ms after; system CPU was

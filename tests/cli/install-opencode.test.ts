@@ -1,5 +1,18 @@
 import assert from "node:assert/strict";
-import { access, chmod, lstat, mkdtemp, mkdir, readFile, readdir, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  lstat,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  readlink,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -11,9 +24,14 @@ import { installOpenCode, uninstallOpenCode } from "../../src/cli/install-openco
 test("OpenCode preserves an existing incomplete runtime directory", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "git-relay-opencode-runtime-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const source = join(dir, "dist"), first = join(dir, "first"), second = join(dir, "second");
+  const source = join(dir, "dist"),
+    first = join(dir, "first"),
+    second = join(dir, "second");
   await mkdir(join(source, "adapters", "opencode"), { recursive: true });
-  await writeFile(join(source, "adapters", "opencode", "index.js"), "export default { id: 'git-relay', setup() {} };\n");
+  await writeFile(
+    join(source, "adapters", "opencode", "index.js"),
+    "export default { id: 'git-relay', setup() {} };\n",
+  );
   await installOpenCode(first, join(dir, "config-first"), source);
   const id = JSON.parse(await readFile(join(first, "opencode.json"), "utf8")).current.slice(21);
   await mkdir(second);
@@ -21,11 +39,17 @@ test("OpenCode preserves an existing incomplete runtime directory", async (t) =>
   const runtime = join(second, "runtimes", id);
   await mkdir(runtime, { recursive: true });
   const inode = await lstat(runtime);
-  await assert.rejects(installOpenCode(second, join(dir, "config-second"), source), /runtime is incomplete or was modified; preserved/);
+  await assert.rejects(
+    installOpenCode(second, join(dir, "config-second"), source),
+    /runtime is incomplete or was modified; preserved/,
+  );
   assert.equal((await lstat(runtime)).ino, inode.ino);
   assert.deepEqual(await readdir(runtime), []);
   await writeFile(join(runtime, "user-data"), "preserve");
-  await assert.rejects(installOpenCode(second, join(dir, "config-second"), source), /runtime is incomplete or was modified; preserved/);
+  await assert.rejects(
+    installOpenCode(second, join(dir, "config-second"), source),
+    /runtime is incomplete or was modified; preserved/,
+  );
   assert.equal((await lstat(runtime)).ino, inode.ino);
   assert.equal(await readFile(join(runtime, "user-data"), "utf8"), "preserve");
 });
@@ -81,7 +105,10 @@ test("OpenCode install is repeatable, recovers its journal, and preserves unrela
   const updatedRevision = JSON.parse(await readFile(state, "utf8")).current;
   assert.notEqual(updatedRevision, originalRevision);
   const anchor = JSON.parse(await readFile(state, "utf8")).anchor;
-  await writeFile(state, JSON.stringify({ entry, content: original, anchor, current: originalRevision, pending: updatedRevision }));
+  await writeFile(
+    state,
+    JSON.stringify({ entry, content: original, anchor, current: originalRevision, pending: updatedRevision }),
+  );
   await installOpenCode(root, config, source);
   assert.equal(JSON.parse(await readFile(state, "utf8")).current, updatedRevision);
   await writeFile(module, "export default { id: 'git-relay', setup() {}, version: 2 };\n");
@@ -142,7 +169,10 @@ test("first install retries when journal was written before revision publication
   const config = join(dir, "config");
   const source = join(dir, "dist");
   await mkdir(join(source, "adapters", "opencode"), { recursive: true });
-  await writeFile(join(source, "adapters", "opencode", "index.js"), "export default { id: 'git-relay', setup() {} };\n");
+  await writeFile(
+    join(source, "adapters", "opencode", "index.js"),
+    "export default { id: 'git-relay', setup() {} };\n",
+  );
   await installOpenCode(root, config, source);
   const state = join(root, "opencode.json");
   const record = JSON.parse(await readFile(state, "utf8"));
@@ -165,7 +195,10 @@ test("workspace publication refuses an existing unowned empty directory and igno
   const config = join(dir, "config");
   const source = join(dir, "dist");
   await mkdir(join(source, "adapters", "opencode"), { recursive: true });
-  await writeFile(join(source, "adapters", "opencode", "index.js"), "export default { id: 'git-relay', setup() {} };\n");
+  await writeFile(
+    join(source, "adapters", "opencode", "index.js"),
+    "export default { id: 'git-relay', setup() {} };\n",
+  );
   await mkdir(root);
   await assert.rejects(installOpenCode(root, config, source), /not an owned|Not an owned/);
   await rm(root, { recursive: true });
@@ -177,208 +210,422 @@ test("workspace publication refuses an existing unowned empty directory and igno
   await uninstallOpenCode(root, config);
 });
 
-test("OpenCode anchor and archive follow an existing plugin-directory symlink", { skip: process.platform === "win32" }, async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "git-relay-plugin-link-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const root = join(dir, "git-relay");
-  const config = join(dir, "config");
-  const source = join(dir, "dist");
-  const target = join(dir, "external-plugins");
-  await mkdir(join(source, "adapters", "opencode"), { recursive: true });
-  await writeFile(join(source, "adapters", "opencode", "index.js"), "export default { id: 'git-relay', setup() {} };\n");
-  await mkdir(join(config, "opencode"), { recursive: true });
-  await mkdir(target);
-  await symlink(target, join(config, "opencode", "plugins"), "dir");
-  await installOpenCode(root, config, source);
-  const record = JSON.parse(await readFile(join(root, "opencode.json"), "utf8"));
-  await readFile(join(target, record.anchor));
-  const archive = await uninstallOpenCode(root, config);
-  assert.equal(await readFile(archive!, "utf8"), record.content);
-});
+test(
+  "OpenCode anchor and archive follow an existing plugin-directory symlink",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const dir = await mkdtemp(join(tmpdir(), "git-relay-plugin-link-"));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const root = join(dir, "git-relay");
+    const config = join(dir, "config");
+    const source = join(dir, "dist");
+    const target = join(dir, "external-plugins");
+    await mkdir(join(source, "adapters", "opencode"), { recursive: true });
+    await writeFile(
+      join(source, "adapters", "opencode", "index.js"),
+      "export default { id: 'git-relay', setup() {} };\n",
+    );
+    await mkdir(join(config, "opencode"), { recursive: true });
+    await mkdir(target);
+    await symlink(target, join(config, "opencode", "plugins"), "dir");
+    await installOpenCode(root, config, source);
+    const record = JSON.parse(await readFile(join(root, "opencode.json"), "utf8"));
+    await readFile(join(target, record.anchor));
+    const archive = await uninstallOpenCode(root, config);
+    assert.equal(await readFile(archive!, "utf8"), record.content);
+  },
+);
 
-test("CLI configures selected OpenCode and supports alias-safe uninstall preview", { skip: process.platform === "win32" }, async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "git-relay-cli-install-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const bin = join(dir, "bin");
-  await mkdir(bin);
-  for (const [name, version] of [["codex", "codex-cli 0.164.0"], ["opencode", "opencode v2.1.2"]]) {
-    const path = join(bin, name);
-    await writeFile(path, `#!/bin/sh\nprintf '${version}\\n'\n`);
-    await chmod(path, 0o755);
-  }
-  const brokenCodex = join(bin, "codex");
-  await writeFile(brokenCodex, "#!/bin/sh\nexit 3\n");
-  await chmod(brokenCodex, 0o755);
-  const env = { ...process.env, PATH: bin, XDG_DATA_HOME: join(dir, "data"), XDG_CONFIG_HOME: join(dir, "config") };
-  const cli = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
-  const run = promisify(execFile);
-  const result = JSON.parse((await run(process.execPath, ["--experimental-strip-types", cli, "install", "--platform", "opencode"], { env })).stdout);
-  assert.equal(result.failed, false);
-  assert.equal(result.results.find((item: { platform: string }) => item.platform === "opencode").status, "configured");
-  const entry = join(env.XDG_CONFIG_HOME, "opencode", "plugins", "git-relay.js");
-  assert.match(await readFile(entry, "utf8"), /file:/);
-  const failed = await run(process.execPath, ["--experimental-strip-types", cli, "install", "--platform", "codex", "--platform", "opencode"], { env }).then(() => null, (error) => error);
-  const partial = JSON.parse(failed.stdout);
-  assert.equal(partial.failed, true);
-  assert.equal(partial.results.find((item: { platform: string }) => item.platform === "codex").status, "unavailable");
-  assert.equal(partial.results.find((item: { platform: string }) => item.platform === "opencode").status, "configured");
-  const openCodeState = join(result.workspace, "opencode.json");
-  const savedOpenCode = await readFile(openCodeState, "utf8");
-  await writeFile(openCodeState, JSON.stringify({ ...JSON.parse(savedOpenCode), removed: "false" }));
-  for (const args of [["uninstall", "--platform", "opencode"], ["uninstall", "--platform", "opencode", "--dry-run"]]) {
-    const error = await run(process.execPath, ["--experimental-strip-types", cli, ...args], { env }).then(() => null, (failure) => failure);
-    const output = JSON.parse(error.stdout);
-    assert.equal(output.failed, true);
-    assert.match(output.results.find((item: { platform: string }) => item.platform === "opencode").reason, /Invalid OpenCode installation record/);
-    await readFile(entry);
-  }
-  await writeFile(openCodeState, savedOpenCode);
-  const savedRecordPath = join(result.workspace, "opencode.saved.json");
-  await rename(openCodeState, savedRecordPath);
-  await symlink("missing-record", openCodeState);
-  for (const args of [["uninstall", "--platform", "opencode"], ["uninstall", "--platform", "opencode", "--dry-run"]]) {
-    const error = await run(process.execPath, ["--experimental-strip-types", cli, ...args], { env }).then(() => null, (failure) => failure);
-    const output = JSON.parse(error.stdout);
-    assert.equal(output.failed, true);
-    assert.match(output.results.find((item: { platform: string }) => item.platform === "opencode").reason, /State path exists but cannot be read/);
-    assert.equal(await readlink(openCodeState), "missing-record");
-    assert.equal(await readFile(savedRecordPath, "utf8"), savedOpenCode);
+test(
+  "CLI configures selected OpenCode and supports alias-safe uninstall preview",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const dir = await mkdtemp(join(tmpdir(), "git-relay-cli-install-"));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const bin = join(dir, "bin");
+    await mkdir(bin);
+    for (const [name, version] of [
+      ["codex", "codex-cli 0.164.0"],
+      ["opencode", "opencode v2.1.2"],
+    ]) {
+      const path = join(bin, name);
+      await writeFile(path, `#!/bin/sh\nprintf '${version}\\n'\n`);
+      await chmod(path, 0o755);
+    }
+    const brokenCodex = join(bin, "codex");
+    await writeFile(brokenCodex, "#!/bin/sh\nexit 3\n");
+    await chmod(brokenCodex, 0o755);
+    const env = { ...process.env, PATH: bin, XDG_DATA_HOME: join(dir, "data"), XDG_CONFIG_HOME: join(dir, "config") };
+    const cli = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
+    const run = promisify(execFile);
+    const result = JSON.parse(
+      (await run(process.execPath, ["--experimental-strip-types", cli, "install", "--platform", "opencode"], { env }))
+        .stdout,
+    );
+    assert.equal(result.failed, false);
+    assert.equal(
+      result.results.find((item: { platform: string }) => item.platform === "opencode").status,
+      "configured",
+    );
+    const entry = join(env.XDG_CONFIG_HOME, "opencode", "plugins", "git-relay.js");
     assert.match(await readFile(entry, "utf8"), /file:/);
-  }
-  await rm(openCodeState);
-  await rename(savedRecordPath, openCodeState);
+    const failed = await run(
+      process.execPath,
+      ["--experimental-strip-types", cli, "install", "--platform", "codex", "--platform", "opencode"],
+      { env },
+    ).then(
+      () => null,
+      (error) => error,
+    );
+    const partial = JSON.parse(failed.stdout);
+    assert.equal(partial.failed, true);
+    assert.equal(partial.results.find((item: { platform: string }) => item.platform === "codex").status, "unavailable");
+    assert.equal(
+      partial.results.find((item: { platform: string }) => item.platform === "opencode").status,
+      "configured",
+    );
+    const openCodeState = join(result.workspace, "opencode.json");
+    const savedOpenCode = await readFile(openCodeState, "utf8");
+    await writeFile(openCodeState, JSON.stringify({ ...JSON.parse(savedOpenCode), removed: "false" }));
+    for (const args of [
+      ["uninstall", "--platform", "opencode"],
+      ["uninstall", "--platform", "opencode", "--dry-run"],
+    ]) {
+      const error = await run(process.execPath, ["--experimental-strip-types", cli, ...args], { env }).then(
+        () => null,
+        (failure) => failure,
+      );
+      const output = JSON.parse(error.stdout);
+      assert.equal(output.failed, true);
+      assert.match(
+        output.results.find((item: { platform: string }) => item.platform === "opencode").reason,
+        /Invalid OpenCode installation record/,
+      );
+      await readFile(entry);
+    }
+    await writeFile(openCodeState, savedOpenCode);
+    const savedRecordPath = join(result.workspace, "opencode.saved.json");
+    await rename(openCodeState, savedRecordPath);
+    await symlink("missing-record", openCodeState);
+    for (const args of [
+      ["uninstall", "--platform", "opencode"],
+      ["uninstall", "--platform", "opencode", "--dry-run"],
+    ]) {
+      const error = await run(process.execPath, ["--experimental-strip-types", cli, ...args], { env }).then(
+        () => null,
+        (failure) => failure,
+      );
+      const output = JSON.parse(error.stdout);
+      assert.equal(output.failed, true);
+      assert.match(
+        output.results.find((item: { platform: string }) => item.platform === "opencode").reason,
+        /State path exists but cannot be read/,
+      );
+      assert.equal(await readlink(openCodeState), "missing-record");
+      assert.equal(await readFile(savedRecordPath, "utf8"), savedOpenCode);
+      assert.match(await readFile(entry, "utf8"), /file:/);
+    }
+    await rm(openCodeState);
+    await rename(savedRecordPath, openCodeState);
 
-  const codexState = join(result.workspace, "codex-install.json");
-  await writeFile(codexState, JSON.stringify({ pluginOwned: true }));
-  const blocked = await run(process.execPath, ["--experimental-strip-types", cli, "uninstall", "--platform", "codex"], { env }).then(() => null, (error) => error);
-  const blockedResult = JSON.parse(blocked.stdout);
-  assert.equal(blockedResult.failed, true);
-  assert.match(blockedResult.results.find((item: { platform: string }) => item.platform === "codex").reason, /uninstall is unavailable/);
-  assert.deepEqual(JSON.parse(await readFile(codexState, "utf8")), { pluginOwned: true });
-  const alias = join(dir, "config-alias");
-  await symlink(env.XDG_CONFIG_HOME, alias, "dir");
-  const aliasEnv = { ...env, XDG_CONFIG_HOME: alias };
-  await run(process.execPath, ["--experimental-strip-types", cli, "install", "--platform", "opencode"], { env: aliasEnv });
-  const preview = JSON.parse((await run(process.execPath, ["--experimental-strip-types", cli, "uninstall", "--platform", "opencode", "--dry-run"], { env: aliasEnv })).stdout);
-  assert.equal(preview.results.find((item: { platform: string }) => item.platform === "opencode").status, "would-check-and-remove");
-  const originalEntry = await readFile(entry, "utf8");
-  await writeFile(entry, "user edit\n");
-  const changedPreview = JSON.parse((await run(process.execPath, ["--experimental-strip-types", cli, "uninstall", "--platform", "opencode", "--dry-run"], { env: aliasEnv })).stdout);
-  assert.equal(changedPreview.results.find((item: { platform: string }) => item.platform === "opencode").status, "would-check-and-remove");
-  const refused = await run(process.execPath, ["--experimental-strip-types", cli, "uninstall", "--platform", "opencode"], { env: aliasEnv }).then(() => null, (error) => error);
-  assert.equal(JSON.parse(refused.stdout).failed, true);
-  assert.equal(await readFile(entry, "utf8"), "user edit\n");
-  await writeFile(entry, originalEntry);
-  await readFile(entry);
-  await run(process.execPath, ["--experimental-strip-types", cli, "uninstall", "--platform", "opencode"], { env: aliasEnv });
-  await assert.rejects(readFile(entry), { code: "ENOENT" });
-});
+    const codexState = join(result.workspace, "codex-install.json");
+    await writeFile(codexState, JSON.stringify({ pluginOwned: true }));
+    const blocked = await run(
+      process.execPath,
+      ["--experimental-strip-types", cli, "uninstall", "--platform", "codex"],
+      { env },
+    ).then(
+      () => null,
+      (error) => error,
+    );
+    const blockedResult = JSON.parse(blocked.stdout);
+    assert.equal(blockedResult.failed, true);
+    assert.match(
+      blockedResult.results.find((item: { platform: string }) => item.platform === "codex").reason,
+      /uninstall is unavailable/,
+    );
+    assert.deepEqual(JSON.parse(await readFile(codexState, "utf8")), { pluginOwned: true });
+    const alias = join(dir, "config-alias");
+    await symlink(env.XDG_CONFIG_HOME, alias, "dir");
+    const aliasEnv = { ...env, XDG_CONFIG_HOME: alias };
+    await run(process.execPath, ["--experimental-strip-types", cli, "install", "--platform", "opencode"], {
+      env: aliasEnv,
+    });
+    const preview = JSON.parse(
+      (
+        await run(
+          process.execPath,
+          ["--experimental-strip-types", cli, "uninstall", "--platform", "opencode", "--dry-run"],
+          { env: aliasEnv },
+        )
+      ).stdout,
+    );
+    assert.equal(
+      preview.results.find((item: { platform: string }) => item.platform === "opencode").status,
+      "would-check-and-remove",
+    );
+    const originalEntry = await readFile(entry, "utf8");
+    await writeFile(entry, "user edit\n");
+    const changedPreview = JSON.parse(
+      (
+        await run(
+          process.execPath,
+          ["--experimental-strip-types", cli, "uninstall", "--platform", "opencode", "--dry-run"],
+          { env: aliasEnv },
+        )
+      ).stdout,
+    );
+    assert.equal(
+      changedPreview.results.find((item: { platform: string }) => item.platform === "opencode").status,
+      "would-check-and-remove",
+    );
+    const refused = await run(
+      process.execPath,
+      ["--experimental-strip-types", cli, "uninstall", "--platform", "opencode"],
+      { env: aliasEnv },
+    ).then(
+      () => null,
+      (error) => error,
+    );
+    assert.equal(JSON.parse(refused.stdout).failed, true);
+    assert.equal(await readFile(entry, "utf8"), "user edit\n");
+    await writeFile(entry, originalEntry);
+    await readFile(entry);
+    await run(process.execPath, ["--experimental-strip-types", cli, "uninstall", "--platform", "opencode"], {
+      env: aliasEnv,
+    });
+    await assert.rejects(readFile(entry), { code: "ENOENT" });
+  },
+);
 
-test("CLI connects Codex hooks, reports trust, and preserves existing or damaged configuration", { skip: process.platform === "win32" }, async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "git-relay-cli-codex-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const bin = join(dir, "bin"), home = join(dir, "codex");
-  await mkdir(bin);
-  await mkdir(home);
-  const fakeCodex = join(bin, "codex");
-  await writeFile(fakeCodex, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf 'codex-cli 0.164.0\\n'; else printf '%s\\n' '{"installed":[]}'; fi\n`);
-  await chmod(fakeCodex, 0o755);
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, CODEX_HOME: home, XDG_DATA_HOME: join(dir, "data"), XDG_CONFIG_HOME: join(dir, "config") };
-  const cli = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
-  const run = promisify(execFile), hooks = join(home, "hooks.json");
-  await writeFile(hooks, '{"hooks":{"user":"keep"}}\n');
-  const conflict = await run(process.execPath, ["--experimental-strip-types", cli, "install", "--platform", "codex"], { env }).then(() => null, (failure) => failure);
-  assert.equal(JSON.parse(conflict.stdout).failed, true);
-  assert.equal(await readFile(hooks, "utf8"), '{"hooks":{"user":"keep"}}\n');
-  await rm(hooks);
-  const result = JSON.parse((await run(process.execPath, ["--experimental-strip-types", cli, "install", "--platform", "codex"], { env })).stdout);
-  const codex = result.results.find((item: { platform: string }) => item.platform === "codex");
-  assert.equal(codex.status, "pending-trust");
-  assert.match(codex.action, /\/hooks/);
-  const state = join(result.workspace, "codex-hooks.json"), saved = await readFile(state, "utf8");
-  await writeFile(state, JSON.stringify({ ...JSON.parse(saved), removed: "false" }));
-  for (const args of [["uninstall", "--platform", "codex"], ["uninstall", "--platform", "codex", "--dry-run"]]) {
-    const error = await run(process.execPath, ["--experimental-strip-types", cli, ...args], { env }).then(() => null, (failure) => failure);
-    const output = JSON.parse(error.stdout);
-    assert.equal(output.failed, true);
-    assert.match(output.results.find((item: { platform: string }) => item.platform === "codex").reason, /Invalid Codex installation record/);
-    await readFile(hooks);
-  }
-  await writeFile(state, saved);
-  const target = join(result.workspace, "codex.saved.json"), savedHooks = await readFile(hooks, "utf8");
-  await rename(state, target); await symlink("codex.saved.json", state);
-  for (const args of [["install", "--platform", "codex"], ["install", "--platform", "codex", "--dry-run"], ["uninstall", "--platform", "codex"], ["uninstall", "--platform", "codex", "--dry-run"]]) {
-    const error = await run(process.execPath, ["--experimental-strip-types", cli, ...args], { env }).then(() => null, (failure) => failure);
-    const output = JSON.parse(error.stdout);
-    assert.equal(output.failed, true);
-    assert.match(output.results.find((item: { platform: string }) => item.platform === "codex").reason, /Invalid Codex installation record/);
-    assert.equal(await readlink(state), "codex.saved.json");
-    assert.equal(await readFile(target, "utf8"), saved);
-    assert.equal(await readFile(hooks, "utf8"), savedHooks);
-  }
-  await rm(state); await rename(target, state);
-  const removed = JSON.parse((await run(process.execPath, ["--experimental-strip-types", cli, "uninstall", "--platform", "codex"], { env })).stdout);
-  assert.equal(removed.results.find((item: { platform: string }) => item.platform === "codex").status, "removed");
-  await assert.rejects(readFile(hooks), { code: "ENOENT" });
-});
+test(
+  "CLI connects Codex hooks, reports trust, and preserves existing or damaged configuration",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const dir = await mkdtemp(join(tmpdir(), "git-relay-cli-codex-"));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const bin = join(dir, "bin"),
+      home = join(dir, "codex");
+    await mkdir(bin);
+    await mkdir(home);
+    const fakeCodex = join(bin, "codex");
+    await writeFile(
+      fakeCodex,
+      `#!/bin/sh\nif [ "$1" = "--version" ]; then printf 'codex-cli 0.164.0\\n'; else printf '%s\\n' '{"installed":[]}'; fi\n`,
+    );
+    await chmod(fakeCodex, 0o755);
+    const env = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      CODEX_HOME: home,
+      XDG_DATA_HOME: join(dir, "data"),
+      XDG_CONFIG_HOME: join(dir, "config"),
+    };
+    const cli = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
+    const run = promisify(execFile),
+      hooks = join(home, "hooks.json");
+    await writeFile(hooks, '{"hooks":{"user":"keep"}}\n');
+    const conflict = await run(
+      process.execPath,
+      ["--experimental-strip-types", cli, "install", "--platform", "codex"],
+      { env },
+    ).then(
+      () => null,
+      (failure) => failure,
+    );
+    assert.equal(JSON.parse(conflict.stdout).failed, true);
+    assert.equal(await readFile(hooks, "utf8"), '{"hooks":{"user":"keep"}}\n');
+    await rm(hooks);
+    const result = JSON.parse(
+      (await run(process.execPath, ["--experimental-strip-types", cli, "install", "--platform", "codex"], { env }))
+        .stdout,
+    );
+    const codex = result.results.find((item: { platform: string }) => item.platform === "codex");
+    assert.equal(codex.status, "pending-trust");
+    assert.match(codex.action, /\/hooks/);
+    const state = join(result.workspace, "codex-hooks.json"),
+      saved = await readFile(state, "utf8");
+    await writeFile(state, JSON.stringify({ ...JSON.parse(saved), removed: "false" }));
+    for (const args of [
+      ["uninstall", "--platform", "codex"],
+      ["uninstall", "--platform", "codex", "--dry-run"],
+    ]) {
+      const error = await run(process.execPath, ["--experimental-strip-types", cli, ...args], { env }).then(
+        () => null,
+        (failure) => failure,
+      );
+      const output = JSON.parse(error.stdout);
+      assert.equal(output.failed, true);
+      assert.match(
+        output.results.find((item: { platform: string }) => item.platform === "codex").reason,
+        /Invalid Codex installation record/,
+      );
+      await readFile(hooks);
+    }
+    await writeFile(state, saved);
+    const target = join(result.workspace, "codex.saved.json"),
+      savedHooks = await readFile(hooks, "utf8");
+    await rename(state, target);
+    await symlink("codex.saved.json", state);
+    for (const args of [
+      ["install", "--platform", "codex"],
+      ["install", "--platform", "codex", "--dry-run"],
+      ["uninstall", "--platform", "codex"],
+      ["uninstall", "--platform", "codex", "--dry-run"],
+    ]) {
+      const error = await run(process.execPath, ["--experimental-strip-types", cli, ...args], { env }).then(
+        () => null,
+        (failure) => failure,
+      );
+      const output = JSON.parse(error.stdout);
+      assert.equal(output.failed, true);
+      assert.match(
+        output.results.find((item: { platform: string }) => item.platform === "codex").reason,
+        /Invalid Codex installation record/,
+      );
+      assert.equal(await readlink(state), "codex.saved.json");
+      assert.equal(await readFile(target, "utf8"), saved);
+      assert.equal(await readFile(hooks, "utf8"), savedHooks);
+    }
+    await rm(state);
+    await rename(target, state);
+    const removed = JSON.parse(
+      (await run(process.execPath, ["--experimental-strip-types", cli, "uninstall", "--platform", "codex"], { env }))
+        .stdout,
+    );
+    assert.equal(removed.results.find((item: { platform: string }) => item.platform === "codex").status, "removed");
+    await assert.rejects(readFile(hooks), { code: "ENOENT" });
+  },
+);
 
-test("slow Codex inspection runs after other installations while results keep their order", { skip: process.platform === "win32", timeout: 20000 }, async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "git-relay-slow-codex-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const bin = join(dir, "bin"), started = join(dir, "started"), release = join(dir, "release");
-  await mkdir(bin);
-  await writeFile(join(bin, "opencode"), "#!/bin/sh\nprintf 'opencode v2.1.2\\n'\n", { mode: 0o755 });
-  await writeFile(join(bin, "codex"), "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf 'codex-cli 0.164.0\\n'; else printf started > \"$TASK_STARTED\"; while [ ! -e \"$TASK_RELEASE\" ]; do /bin/sleep 0.05; done; printf '%s\\n' '{\"installed\":[]}'; fi\n", { mode: 0o755 });
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, CODEX_HOME: join(dir, "codex"), XDG_DATA_HOME: join(dir, "data"), XDG_CONFIG_HOME: join(dir, "config"), TASK_STARTED: started, TASK_RELEASE: release };
-  const cli = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
-  const child = spawn(process.execPath, ["--experimental-strip-types", cli, "install", "--platform", "codex", "--platform", "opencode"], { env, stdio: ["ignore", "pipe", "pipe"] });
-  let stdout = "", stderr = "";
-  child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
-  child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
-  const finished = new Promise<number | null>((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
-  try {
+test(
+  "slow Codex inspection runs after other installations while results keep their order",
+  { skip: process.platform === "win32", timeout: 20000 },
+  async (t) => {
+    const dir = await mkdtemp(join(tmpdir(), "git-relay-slow-codex-"));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const bin = join(dir, "bin"),
+      started = join(dir, "started"),
+      release = join(dir, "release");
+    await mkdir(bin);
+    await writeFile(join(bin, "opencode"), "#!/bin/sh\nprintf 'opencode v2.1.2\\n'\n", { mode: 0o755 });
+    await writeFile(
+      join(bin, "codex"),
+      '#!/bin/sh\nif [ "$1" = "--version" ]; then printf \'codex-cli 0.164.0\\n\'; else printf started > "$TASK_STARTED"; while [ ! -e "$TASK_RELEASE" ]; do /bin/sleep 0.05; done; printf \'%s\\n\' \'{"installed":[]}\'; fi\n',
+      { mode: 0o755 },
+    );
+    const env = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      CODEX_HOME: join(dir, "codex"),
+      XDG_DATA_HOME: join(dir, "data"),
+      XDG_CONFIG_HOME: join(dir, "config"),
+      TASK_STARTED: started,
+      TASK_RELEASE: release,
+    };
+    const cli = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
+    const child = spawn(
+      process.execPath,
+      ["--experimental-strip-types", cli, "install", "--platform", "codex", "--platform", "opencode"],
+      { env, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stdout = "",
+      stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => {
+      stderr += chunk;
+    });
+    const finished = new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    });
+    try {
+      let seen = false;
+      for (let attempt = 0; attempt < 400 && !seen; attempt++) {
+        seen = await access(started).then(
+          () => true,
+          () => false,
+        );
+        if (!seen) await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      assert.equal(seen, true, "Codex inspection did not start");
+      await access(join(env.XDG_CONFIG_HOME, "opencode", "plugins", "git-relay.js"));
+    } finally {
+      await writeFile(release, "release");
+    }
+    assert.equal(await finished, 0, stderr);
+    const result = JSON.parse(stdout);
+    assert.deepEqual(
+      result.results.map((item: { platform: string }) => item.platform),
+      ["codex", "opencode"],
+    );
+    assert.equal(result.results[0].status, "pending-trust");
+    assert.equal(result.results[1].status, "configured");
+  },
+);
+
+test(
+  "interrupting a Codex installation stops without reporting a successful result",
+  { skip: process.platform === "win32", timeout: 10000 },
+  async (t) => {
+    const dir = await mkdtemp(join(tmpdir(), "git-relay-interrupt-codex-"));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const bin = join(dir, "bin"),
+      started = join(dir, "started");
+    await mkdir(bin);
+    await writeFile(
+      join(bin, "codex"),
+      '#!/bin/sh\nif [ "$1" = "--version" ]; then printf \'codex-cli 0.164.0\\n\'; else printf started > "$TASK_STARTED"; exec /bin/sleep 3; fi\n',
+      { mode: 0o755 },
+    );
+    const env = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      CODEX_HOME: join(dir, "codex"),
+      XDG_DATA_HOME: join(dir, "data"),
+      XDG_CONFIG_HOME: join(dir, "config"),
+      TASK_STARTED: started,
+    };
+    const cli = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
+    const child = spawn(process.execPath, ["--experimental-strip-types", cli, "install", "--platform", "codex"], {
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.resume();
+    const finished = new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    });
     let seen = false;
-    for (let attempt = 0; attempt < 400 && !seen; attempt++) {
-      seen = await access(started).then(() => true, () => false);
+    for (let attempt = 0; attempt < 200 && !seen; attempt++) {
+      seen = await access(started).then(
+        () => true,
+        () => false,
+      );
       if (!seen) await new Promise((resolve) => setTimeout(resolve, 25));
     }
     assert.equal(seen, true, "Codex inspection did not start");
-    await access(join(env.XDG_CONFIG_HOME, "opencode", "plugins", "git-relay.js"));
-  } finally {
-    await writeFile(release, "release");
-  }
-  assert.equal(await finished, 0, stderr);
-  const result = JSON.parse(stdout);
-  assert.deepEqual(result.results.map((item: { platform: string }) => item.platform), ["codex", "opencode"]);
-  assert.equal(result.results[0].status, "pending-trust");
-  assert.equal(result.results[1].status, "configured");
-});
-
-test("interrupting a Codex installation stops without reporting a successful result", { skip: process.platform === "win32", timeout: 10000 }, async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "git-relay-interrupt-codex-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const bin = join(dir, "bin"), started = join(dir, "started");
-  await mkdir(bin);
-  await writeFile(join(bin, "codex"), "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf 'codex-cli 0.164.0\\n'; else printf started > \"$TASK_STARTED\"; exec /bin/sleep 3; fi\n", { mode: 0o755 });
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, CODEX_HOME: join(dir, "codex"), XDG_DATA_HOME: join(dir, "data"), XDG_CONFIG_HOME: join(dir, "config"), TASK_STARTED: started };
-  const cli = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
-  const child = spawn(process.execPath, ["--experimental-strip-types", cli, "install", "--platform", "codex"], { env, stdio: ["ignore", "pipe", "pipe"] });
-  let stdout = "";
-  child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
-  child.stderr.resume();
-  const finished = new Promise<number | null>((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
-  let seen = false;
-  for (let attempt = 0; attempt < 200 && !seen; attempt++) {
-    seen = await access(started).then(() => true, () => false);
-    if (!seen) await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  assert.equal(seen, true, "Codex inspection did not start");
-  child.kill("SIGINT");
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const exit = await Promise.race([finished, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Cancellation did not finish promptly")), 2000); })]);
-    assert.equal(exit, 130);
-  } finally { clearTimeout(timer); child.kill("SIGKILL"); }
-  assert.equal(stdout, "");
-  await assert.rejects(access(join(env.CODEX_HOME, "hooks.json")), { code: "ENOENT" });
-});
+    child.kill("SIGINT");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const exit = await Promise.race([
+        finished,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Cancellation did not finish promptly")), 2000);
+        }),
+      ]);
+      assert.equal(exit, 130);
+    } finally {
+      clearTimeout(timer);
+      child.kill("SIGKILL");
+    }
+    assert.equal(stdout, "");
+    await assert.rejects(access(join(env.CODEX_HOME, "hooks.json")), { code: "ENOENT" });
+  },
+);

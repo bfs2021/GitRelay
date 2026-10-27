@@ -7,15 +7,19 @@ import { pathToFileURL } from "node:url";
 import { fixture } from "../helpers.ts";
 
 for (const failure of ["git-error", "missing-git", "warning-error"] as const) {
-  test(`OpenCode initialization handles ${failure} with recovery hooks`, { skip: process.platform === "win32" }, async (t) => {
-    const f = await fixture(t), bin = join(f.root, "failure-bin");
-    await mkdir(bin);
-    if (failure !== "missing-git") {
-      await writeFile(join(bin, "git"), "#!/bin/sh\nprintf 'fatal: injected Git failure\\n' >&2\nexit 77\n");
-      await chmod(join(bin, "git"), 0o755);
-    }
-    const module = pathToFileURL(join(process.cwd(), "src/adapters/opencode/index.ts")).href;
-    const script = `
+  test(
+    `OpenCode initialization handles ${failure} with recovery hooks`,
+    { skip: process.platform === "win32" },
+    async (t) => {
+      const f = await fixture(t),
+        bin = join(f.root, "failure-bin");
+      await mkdir(bin);
+      if (failure !== "missing-git") {
+        await writeFile(join(bin, "git"), "#!/bin/sh\nprintf 'fatal: injected Git failure\\n' >&2\nexit 77\n");
+        await chmod(join(bin, "git"), 0o755);
+      }
+      const module = pathToFileURL(join(process.cwd(), "src/adapters/opencode/index.ts")).href;
+      const script = `
       import assert from "node:assert/strict";
       import plugin from ${JSON.stringify(module)};
       let registrations = 0, hook;
@@ -37,8 +41,13 @@ for (const failure of ["git-error", "missing-git", "warning-error"] as const) {
         assert.match(warnings[0], ${failure === "missing-git" ? "/ENOENT/" : "/injected Git failure/"});
       }
     `;
-    assert.doesNotThrow(() => execFileSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", script], {
-      env: { ...process.env, PATH: bin }, timeout: 20_000, stdio: "pipe",
-    }));
-  });
+      assert.doesNotThrow(() =>
+        execFileSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", script], {
+          env: { ...process.env, PATH: bin },
+          timeout: 20_000,
+          stdio: "pipe",
+        }),
+      );
+    },
+  );
 }

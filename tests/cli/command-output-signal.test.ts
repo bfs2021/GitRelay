@@ -7,11 +7,17 @@ const run = (script: string, timeout = 3000, signal?: AbortSignal) =>
   commandOutputs(process.execPath, ["-e", script], env, timeout, 4096, signal);
 
 test("reports a terminating signal with stderr", { skip: process.platform === "win32" }, async () => {
-  await assert.rejects(run("process.stderr.write('synthetic detail', () => process.kill(process.pid, 'SIGTERM'))"), /Command failed \(signal SIGTERM\): synthetic detail/);
+  await assert.rejects(
+    run("process.stderr.write('synthetic detail', () => process.kill(process.pid, 'SIGTERM'))"),
+    /Command failed \(signal SIGTERM\): synthetic detail/,
+  );
 });
 
 test("preserves nonzero exit diagnostics", async () => {
-  await assert.rejects(run("process.stderr.write('bad version', () => process.exit(17))"), /Command failed: bad version/);
+  await assert.rejects(
+    run("process.stderr.write('bad version', () => process.exit(17))"),
+    /Command failed: bad version/,
+  );
 });
 
 test("preserves timeout rather than reporting its termination signal", async () => {
@@ -26,5 +32,8 @@ test("preserves an explicit cancellation reason", async () => {
 });
 
 test("preserves both successful output streams", async () => {
-  assert.deepEqual(await run("process.stdout.write('2.1.2'); process.stderr.write('notice')"), { stdout: "2.1.2", stderr: "notice" });
+  assert.deepEqual(await run("process.stdout.write('2.1.2'); process.stderr.write('notice')"), {
+    stdout: "2.1.2",
+    stderr: "notice",
+  });
 });

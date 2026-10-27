@@ -10,7 +10,9 @@ import { fixture, git } from "../helpers.ts";
 
 for (const local of ["tracked", "ignored", "uninitialized", "clean", "staged-delete"] as const) {
   test(`submodule updates remain potentially relevant with ${local} local state`, async (t) => {
-    const f = await fixture(t), source = join(f.root, "sub-source"), ref = "refs/heads/main";
+    const f = await fixture(t),
+      source = join(f.root, "sub-source"),
+      ref = "refs/heads/main";
     await mkdir(source);
     git(source, "init", "-q", "-b", "main");
     await writeFile(join(source, "file.txt"), "base\n");
@@ -24,7 +26,15 @@ for (const local of ["tracked", "ignored", "uninitialized", "clean", "staged-del
     git(f.b, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "-q");
 
     const received: Notification[] = [];
-    const receiver = { cwd: f.b, ref, adapter: "test", session: `sub-${local}`, async deliver(batch: Notification[]) { received.push(...batch); } };
+    const receiver = {
+      cwd: f.b,
+      ref,
+      adapter: "test",
+      session: `sub-${local}`,
+      async deliver(batch: Notification[]) {
+        received.push(...batch);
+      },
+    };
     await consumeMailbox(receiver);
     const secret = "PRIVATE_IGNORED_SUBMODULE_CONTENT";
     if (local === "tracked") await writeFile(join(f.b, "sub", "file.txt"), "local edit\n");
@@ -58,13 +68,26 @@ for (const local of ["tracked", "ignored", "uninitialized", "clean", "staged-del
     assert.doesNotMatch(upstream.change.patch, new RegExp(secret));
     assert.match(formatChange(upstream.change), /potentially relevant even when clean or uninitialized/);
 
-    const sent = await sendMessage({ cwd: f.main, adapter: "test", session: "sender", text: "submodule work", files: ["sub/file.txt"] });
+    const sent = await sendMessage({
+      cwd: f.main,
+      adapter: "test",
+      session: "sender",
+      text: "submodule work",
+      files: ["sub/file.txt"],
+    });
     await consumeMailbox(receiver);
     assert.ok(received.some((item) => item.event.id === sent.id));
     assert.deepEqual(await consumeMailbox(receiver), []);
     if (local === "ignored") {
-      const missed = await sendMessage({ cwd: f.main, adapter: "test", session: "sender", text: "previously missed", files: ["sub/file.txt"] });
-      const repo = await repository(f.b), key = sessionKey(repo, receiver, ref);
+      const missed = await sendMessage({
+        cwd: f.main,
+        adapter: "test",
+        session: "sender",
+        text: "previously missed",
+        files: ["sub/file.txt"],
+      });
+      const repo = await repository(f.b),
+        key = sessionKey(repo, receiver, ref);
       const path = join(repo.directory, "receipts", key, `${missed.id}.json`);
       await writeJson(path, { eventId: missed.id, status: "irrelevant", at: new Date().toISOString() });
       const before = await readFile(path);

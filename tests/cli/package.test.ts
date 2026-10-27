@@ -21,7 +21,8 @@ test("package exposes the CLI and only Codex and OpenCode adapters", async () =>
   assert.equal(manifest.bin["worktree-sync"], manifest.bin["git-relay"]);
   assert.match(await read("README.md"), /^# GitRelay\n/);
   assert.ok(await read("dist/cli/main.js"));
-  for (const name of ["publisher", "sessions", "cleanup", "daemon-state", "daemon"]) assert.ok(await read(`dist/core/${name}.js`));
+  for (const name of ["publisher", "sessions", "cleanup", "daemon-state", "daemon"])
+    assert.ok(await read(`dist/core/${name}.js`));
   for (const name of ["maintenance", "acceptance"]) assert.ok(await read(`docs/${name}.md`));
   assert.equal(manifest.pi, undefined);
   assert.equal(manifest.devDependencies["@earendil-works/pi-coding-agent"], undefined);
@@ -34,41 +35,52 @@ test("package exposes the CLI and only Codex and OpenCode adapters", async () =>
     assert.ok(hooks.hooks);
     assert.ok(JSON.stringify(hooks).includes(`git-relay hook ${agent}`));
   }
-
 });
 
-test("Codex plugin bundles its runtime and runs hooks from an installed path containing spaces", { skip: process.platform === "win32" }, async (t) => {
-  const f = await fixture(t);
-  const root = fileURLToPath(new URL("../../", import.meta.url));
-  await exec(process.execPath, [join(root, "scripts/build-codex-plugin.mjs")]);
-  const installed = join(f.root, "installed plugin");
-  await cp(join(root, ".codex/plugin-build"), installed, { recursive: true });
-  const installedPackage = JSON.parse(await readFile(join(installed, "package.json"), "utf8"));
-  assert.equal(installedPackage.license, "MIT");
-  assert.equal(await readFile(join(installed, "LICENSE"), "utf8"), await read("LICENSE"));
-  assert.equal(await readFile(join(installed, "CONTRIBUTING.md"), "utf8"), await read("CONTRIBUTING.md"));
-  const plugin = JSON.parse(await readFile(join(installed, ".codex-plugin/plugin.json"), "utf8"));
-  const catalog = JSON.parse(await read(".agents/plugins/marketplace.json"));
-  assert.equal(catalog.plugins[0].name, plugin.name);
-  assert.equal(plugin.interface.displayName, "GitRelay");
-  for (const key of ["logo", "composerIcon"]) {
-    const asset = await readFile(join(installed, plugin.interface[key]), "utf8");
-    assert.match(asset, /<svg\b/);
-    assert.match(asset, /viewBox="0 0 128 128"/);
-  }
-  for (const name of ["git-relay", "git-relay-sync", "git-relay-help", "worktree-coordination"]) {
-    await access(join(installed, plugin.skills, name, "SKILL.md"));
-    await access(join(installed, plugin.skills, name, "agents/openai.yaml"));
-  }
-  await access(join(installed, "docs/integrations.md"));
-  await assert.rejects(access(join(installed, "node_modules")));
-  assert.match(await readFile(join(installed, "dist/vendor/smol-toml/LICENSE"), "utf8"), /Redistribution and use/);
-  const hooks = JSON.parse(await readFile(join(installed, plugin.hooks), "utf8"));
-  const command = hooks.hooks.UserPromptSubmit[0].hooks[0].command;
-  assert.ok(!command.includes("auto-sync"));
-  const child = exec("/bin/sh", ["-c", command], { cwd: f.b, env: { ...process.env, PLUGIN_ROOT: installed } });
-  child.child.stdin!.end(JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: "Enable GitRelay", session_id: "installed-plugin", cwd: f.b }));
-  const result = JSON.parse((await child).stdout);
-  assert.match(result.systemMessage, /feature\/b/);
-  assert.match(result.systemMessage, /Auto-sync.*Off/);
-});
+test(
+  "Codex plugin bundles its runtime and runs hooks from an installed path containing spaces",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const f = await fixture(t);
+    const root = fileURLToPath(new URL("../../", import.meta.url));
+    await exec(process.execPath, [join(root, "scripts/build-codex-plugin.mjs")]);
+    const installed = join(f.root, "installed plugin");
+    await cp(join(root, ".codex/plugin-build"), installed, { recursive: true });
+    const installedPackage = JSON.parse(await readFile(join(installed, "package.json"), "utf8"));
+    assert.equal(installedPackage.license, "MIT");
+    assert.equal(await readFile(join(installed, "LICENSE"), "utf8"), await read("LICENSE"));
+    assert.equal(await readFile(join(installed, "CONTRIBUTING.md"), "utf8"), await read("CONTRIBUTING.md"));
+    assert.equal(await readFile(join(installed, "CHANGELOG.md"), "utf8"), await read("CHANGELOG.md"));
+    const plugin = JSON.parse(await readFile(join(installed, ".codex-plugin/plugin.json"), "utf8"));
+    const catalog = JSON.parse(await read(".agents/plugins/marketplace.json"));
+    assert.equal(catalog.plugins[0].name, plugin.name);
+    assert.equal(plugin.interface.displayName, "GitRelay");
+    for (const key of ["logo", "composerIcon"]) {
+      const asset = await readFile(join(installed, plugin.interface[key]), "utf8");
+      assert.match(asset, /<svg\b/);
+      assert.match(asset, /viewBox="0 0 128 128"/);
+    }
+    for (const name of ["git-relay", "git-relay-sync", "git-relay-help", "worktree-coordination"]) {
+      await access(join(installed, plugin.skills, name, "SKILL.md"));
+      await access(join(installed, plugin.skills, name, "agents/openai.yaml"));
+    }
+    await access(join(installed, "docs/integrations.md"));
+    await assert.rejects(access(join(installed, "node_modules")));
+    assert.match(await readFile(join(installed, "dist/vendor/smol-toml/LICENSE"), "utf8"), /Redistribution and use/);
+    const hooks = JSON.parse(await readFile(join(installed, plugin.hooks), "utf8"));
+    const command = hooks.hooks.UserPromptSubmit[0].hooks[0].command;
+    assert.ok(!command.includes("auto-sync"));
+    const child = exec("/bin/sh", ["-c", command], { cwd: f.b, env: { ...process.env, PLUGIN_ROOT: installed } });
+    child.child.stdin!.end(
+      JSON.stringify({
+        hook_event_name: "UserPromptSubmit",
+        prompt: "Enable GitRelay",
+        session_id: "installed-plugin",
+        cwd: f.b,
+      }),
+    );
+    const result = JSON.parse((await child).stdout);
+    assert.match(result.systemMessage, /feature\/b/);
+    assert.match(result.systemMessage, /Auto-sync.*Off/);
+  },
+);

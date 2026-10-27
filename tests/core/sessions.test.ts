@@ -18,13 +18,25 @@ test("session scans preserve all batches, reject invalid records and refresh aft
   const at = new Date().toISOString();
   const expected = Array.from({ length: 67 }, (_, index) => {
     const identity = { adapter: "test", session: `session-${index}` };
-    return { ...identity, key: sessionKey(repo, identity, ref), root: repo.root, ref, createdAt: at, lastSeen: at, migrated: true, ...(index % 2 ? { closedAt: at } : {}) };
+    return {
+      ...identity,
+      key: sessionKey(repo, identity, ref),
+      root: repo.root,
+      ref,
+      createdAt: at,
+      lastSeen: at,
+      migrated: true,
+      ...(index % 2 ? { closedAt: at } : {}),
+    };
   });
   await Promise.all(expected.map((session) => writeJson(join(directory, `${session.key}.json`), session)));
   await writeJson(join(directory, "unrelated.json"), { ignored: true });
   const names = (await readdir(directory)).filter((name) => /^[a-f0-9]{64}\.json$/.test(name));
   const byKey = new Map(expected.map((session) => [session.key, session]));
-  assert.deepEqual(await sessionsIn(repo), names.map((name) => byKey.get(name.slice(0, -5))));
+  assert.deepEqual(
+    await sessionsIn(repo),
+    names.map((name) => byKey.get(name.slice(0, -5))),
+  );
   const invalid = join(directory, names[32]);
   await writeJson(invalid, { key: names[32].slice(0, -5) });
   await assert.rejects(sessionsIn(repo), /Invalid session/);
@@ -35,7 +47,15 @@ test("session scans preserve all batches, reject invalid records and refresh aft
 test("explicit leave excludes future messages but keeps the old inbox for an explicit rejoin", async (t) => {
   const f = await fixture(t);
   const received: string[] = [];
-  const receiver = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver(batch: Notification[]) { received.push(...batch.map((n) => n.event.id)); } };
+  const receiver = {
+    cwd: f.b,
+    ref,
+    adapter: "codex",
+    session: "B",
+    async deliver(batch: Notification[]) {
+      received.push(...batch.map((n) => n.event.id));
+    },
+  };
   const sender = { cwd: f.a, adapter: "codex", session: "A" };
   await consumeMailbox(receiver);
   const pending = await sendMessage({ ...sender, text: "before leave" });
@@ -61,14 +81,24 @@ test("session identity fields must match the stored key before leave or send", a
   const f = await fixture(t);
   const receiver = { cwd: f.b, ref, adapter: "opencode", session: "B", async deliver() {} };
   await consumeMailbox(receiver);
-  const repo = await repository(f.b), key = sessionKey(repo, receiver, ref);
-  const path = join(repo.directory, "sessions", `${key}.json`), original = await readFile(path, "utf8");
+  const repo = await repository(f.b),
+    key = sessionKey(repo, receiver, ref);
+  const path = join(repo.directory, "sessions", `${key}.json`),
+    original = await readFile(path, "utf8");
   const session = JSON.parse(original);
-  for (const [field, value] of Object.entries({ root: f.a, ref: "refs/heads/other", adapter: "other", session: "other" })) {
+  for (const [field, value] of Object.entries({
+    root: f.a,
+    ref: "refs/heads/other",
+    adapter: "other",
+    session: "other",
+  })) {
     const corrupt = JSON.stringify({ ...session, [field]: value });
     await writeFile(path, corrupt);
     await assert.rejects(leaveSession(receiver), /Invalid session/);
-    await assert.rejects(sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "preserve" }), /Invalid session/);
+    await assert.rejects(
+      sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "preserve" }),
+      /Invalid session/,
+    );
     assert.equal(await readFile(path, "utf8"), corrupt);
   }
   await writeFile(path, original);
@@ -81,8 +111,14 @@ test("lastSeen alone does not retire an offline session, and unknown leave does 
   await consumeMailbox(receiver);
   const repo = await repository(f.b);
   const session = (await listSessions(f.b))[0];
-  await writeJson(join(repo.directory, "sessions", `${session.key}.json`), { ...session, lastSeen: "2000-01-01T00:00:00.000Z" });
-  assert.equal((await sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "offline still subscribed" })).recipients.length, 1);
+  await writeJson(join(repo.directory, "sessions", `${session.key}.json`), {
+    ...session,
+    lastSeen: "2000-01-01T00:00:00.000Z",
+  });
+  assert.equal(
+    (await sendMessage({ cwd: f.a, adapter: "cc", session: "A", text: "offline still subscribed" })).recipients.length,
+    1,
+  );
   assert.equal(await leaveSession({ ...receiver, session: "not-registered" }), undefined);
   assert.equal((await listSessions(f.b)).length, 1);
 });

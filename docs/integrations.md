@@ -46,10 +46,10 @@ prior broadcasts.
 
 ## Host capabilities
 
-| Platform | Integration | Busy session | Already idle session |
-| --- | --- | --- | --- |
-| Codex | Synchronous lifecycle hooks | Context after tools; Stop continuation | Waits for the next hook |
-| OpenCode v2 | Promise plugin | Durable host queue | Polling can start another turn |
+| Platform    | Integration                 | Busy session                           | Already idle session           |
+| ----------- | --------------------------- | -------------------------------------- | ------------------------------ |
+| Codex       | Synchronous lifecycle hooks | Context after tools; Stop continuation | Waits for the next hook        |
+| OpenCode v2 | Promise plugin              | Durable host queue                     | Polling can start another turn |
 
 ## Automatic setup
 

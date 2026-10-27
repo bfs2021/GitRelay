@@ -35,7 +35,13 @@ for (const localDirectory of [true, false]) {
     const file = localDirectory ? "foo" : "foo/upstream.txt";
     const current = await f.commit(f.main, file, "upstream");
     assert.deepEqual((await inspectChange({ root: f.b, ref, commit: f.initial }, current))?.files, [file]);
-    const event = await sendMessage({ cwd: f.main, adapter: "test", session: "sender", text: "overlap", files: [file] });
+    const event = await sendMessage({
+      cwd: f.main,
+      adapter: "test",
+      session: "sender",
+      text: "overlap",
+      files: [file],
+    });
     assert.ok((await consumeMailbox(receiver)).some((item) => item.event.id === event.id));
     const matches = await pathMatcher(f.b, new Set(["foobar/local.txt"]));
     assert.equal(matches("foo"), false);
@@ -67,8 +73,19 @@ test("file message relevance resolves the live ref even when the daemon cache is
   git(f.b, "merge", "--ff-only", "main");
   const token = hash("daemon");
   await writeJson(join(stateDirectory(), "daemon.lock"), { pid: process.pid, token });
-  await writeJson(join(stateDirectory(), "daemon.json"), { pid: process.pid, token, intervalMs: 5000, heartbeatAt: new Date().toISOString() });
-  const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "already integrated", files: ["shared.txt"] });
+  await writeJson(join(stateDirectory(), "daemon.json"), {
+    pid: process.pid,
+    token,
+    intervalMs: 5000,
+    heartbeatAt: new Date().toISOString(),
+  });
+  const event = await sendMessage({
+    cwd: f.a,
+    adapter: "test",
+    session: "sender",
+    text: "already integrated",
+    files: ["shared.txt"],
+  });
   assert.deepEqual(await consumeMailbox(receiver), []);
   const repo = await repository(f.b);
   assert.equal((await readReceipt(repo, sessionKey(repo, receiver, ref), event.id))?.status, "irrelevant");
@@ -84,45 +101,59 @@ test("removed worktrees can explicitly leave without acknowledging unread messag
   git(f.main, "worktree", "remove", f.b);
   assert.ok((await leaveSession(receiver))?.closedAt);
   assert.equal(await readReceipt(repo, key, unread.id), undefined);
-  assert.deepEqual((await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "after leave" })).recipients, []);
+  assert.deepEqual(
+    (await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "after leave" })).recipients,
+    [],
+  );
 });
 
-test("removed worktree leave requires its registered canonical path", { skip: process.platform === "win32" }, async (t) => {
-  const f = await fixture(t);
-  const alias = join(f.root, "alias");
-  await symlink(f.root, alias);
-  const receiver = { cwd: join(alias, basename(f.b)), ref, adapter: "test", session: "B", async deliver() {} };
-  await consumeMailbox(receiver);
-  const repo = await repository(f.b), key = sessionKey(repo, receiver, ref);
-  const unread = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "unread" });
-  git(f.main, "worktree", "remove", f.b);
-  await assert.rejects(leaveSession(receiver), /Cannot uniquely locate/);
-  assert.ok((await leaveSession({ ...receiver, cwd: repo.root }))?.closedAt);
-  assert.equal(await readReceipt(repo, key, unread.id), undefined);
-  assert.deepEqual((await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "after leave" })).recipients, []);
-});
+test(
+  "removed worktree leave requires its registered canonical path",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const f = await fixture(t);
+    const alias = join(f.root, "alias");
+    await symlink(f.root, alias);
+    const receiver = { cwd: join(alias, basename(f.b)), ref, adapter: "test", session: "B", async deliver() {} };
+    await consumeMailbox(receiver);
+    const repo = await repository(f.b),
+      key = sessionKey(repo, receiver, ref);
+    const unread = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "unread" });
+    git(f.main, "worktree", "remove", f.b);
+    await assert.rejects(leaveSession(receiver), /Cannot uniquely locate/);
+    assert.ok((await leaveSession({ ...receiver, cwd: repo.root }))?.closedAt);
+    assert.equal(await readReceipt(repo, key, unread.id), undefined);
+    assert.deepEqual(
+      (await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "after leave" })).recipients,
+      [],
+    );
+  },
+);
 
-for (const kind of ["metadata", "sessions", "repository"] as const) test(`removed worktree leave ignores unrelated corrupt ${kind}`, async (t) => {
-  const f = await fixture(t);
-  const receiver = { cwd: f.b, ref, adapter: "test", session: "B", async deliver() {} };
-  await consumeMailbox(receiver);
-  const repo = await repository(f.b), key = sessionKey(repo, receiver, ref);
-  const unread = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "unread" });
-  const unrelated = join(stateDirectory(), "repos", "f".repeat(64));
-  if (kind !== "repository") await mkdir(unrelated);
-  const corrupt = kind === "repository" ? unrelated : join(unrelated, kind === "metadata" ? "repo.json" : "sessions");
-  await writeFile(corrupt, "{corrupt");
-  git(f.main, "worktree", "remove", f.b);
-  assert.ok((await leaveSession(receiver))?.closedAt);
-  assert.equal(await readReceipt(repo, key, unread.id), undefined);
-  assert.equal(await readFile(corrupt, "utf8"), "{corrupt");
-});
+for (const kind of ["metadata", "sessions", "repository"] as const)
+  test(`removed worktree leave ignores unrelated corrupt ${kind}`, async (t) => {
+    const f = await fixture(t);
+    const receiver = { cwd: f.b, ref, adapter: "test", session: "B", async deliver() {} };
+    await consumeMailbox(receiver);
+    const repo = await repository(f.b),
+      key = sessionKey(repo, receiver, ref);
+    const unread = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "unread" });
+    const unrelated = join(stateDirectory(), "repos", "f".repeat(64));
+    if (kind !== "repository") await mkdir(unrelated);
+    const corrupt = kind === "repository" ? unrelated : join(unrelated, kind === "metadata" ? "repo.json" : "sessions");
+    await writeFile(corrupt, "{corrupt");
+    git(f.main, "worktree", "remove", f.b);
+    assert.ok((await leaveSession(receiver))?.closedAt);
+    assert.equal(await readReceipt(repo, key, unread.id), undefined);
+    assert.equal(await readFile(corrupt, "utf8"), "{corrupt");
+  });
 
 test("removed worktree leave rejects corrupt metadata for its own session", async (t) => {
   const f = await fixture(t);
   const receiver = { cwd: f.b, ref, adapter: "test", session: "B", async deliver() {} };
   await consumeMailbox(receiver);
-  const repo = await repository(f.b), path = join(repo.directory, "sessions", `${sessionKey(repo, receiver, ref)}.json`);
+  const repo = await repository(f.b),
+    path = join(repo.directory, "sessions", `${sessionKey(repo, receiver, ref)}.json`);
   const before = await readFile(path);
   git(f.main, "worktree", "remove", f.b);
   await writeFile(join(repo.directory, "repo.json"), "{corrupt");
@@ -135,7 +166,10 @@ test("dangling lock symlinks fail immediately for ordinary operations and daemon
   await repository(f.b);
   const path = join(stateDirectory(), "daemon.lock");
   await symlink(join(f.root, "missing"), path);
-  await assert.rejects(withLock(path, async () => assert.fail(), { waitMs: 200 }), /not a regular file/);
+  await assert.rejects(
+    withLock(path, async () => assert.fail(), { waitMs: 200 }),
+    /not a regular file/,
+  );
   await assert.rejects(runDaemon({ signal: new AbortController().signal }), /not a regular file/);
 });
 
@@ -149,8 +183,11 @@ test("lock handoff cannot diagnose the replacement using the previous PID", asyn
     renameSync(replacement, path);
     throw Object.assign(new Error("old owner gone"), { code: "ESRCH" });
   });
-  await assert.rejects(withLock(path, async () => assert.fail()), BusyError);
-  assert.equal((await readJson(path) as { pid: number }).pid, process.pid);
+  await assert.rejects(
+    withLock(path, async () => assert.fail()),
+    BusyError,
+  );
+  assert.equal(((await readJson(path)) as { pid: number }).pid, process.pid);
 });
 
 test("lock release leaves an externally replaced lock intact", async (t) => {
@@ -160,7 +197,7 @@ test("lock release leaves an externally replaced lock intact", async (t) => {
     await rm(path);
     await writeJson(path, { pid: process.pid, token: "replacement" });
   });
-  assert.equal((await readJson(path) as { token: string }).token, "replacement");
+  assert.equal(((await readJson(path)) as { token: string }).token, "replacement");
 });
 
 test("missing repositories warn once, retain unread state and collect confirmed events", async (t) => {
@@ -176,8 +213,17 @@ test("missing repositories warn once, retain unread state and collect confirmed 
   const events: any[] = [];
   const timer = setTimeout(() => abort.abort(), 350);
   try {
-    await runDaemon({ signal: abort.signal, intervalMs: 50, retentionDays: 0, onEvent(event) { events.push(event); } });
-  } finally { clearTimeout(timer); }
+    await runDaemon({
+      signal: abort.signal,
+      intervalMs: 50,
+      retentionDays: 0,
+      onEvent(event) {
+        events.push(event);
+      },
+    });
+  } finally {
+    clearTimeout(timer);
+  }
   assert.equal(events.filter((event) => event.type === "daemon.repository-missing").length, 1);
   assert.equal(events.filter((event) => event.type === "daemon.error").length, 0);
   assert.equal(await readJson(join(repo.directory, "events", `${confirmed.id}.json`)), undefined);

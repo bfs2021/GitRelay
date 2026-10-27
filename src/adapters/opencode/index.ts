@@ -20,23 +20,30 @@ export default {
       const reason = error instanceof Error ? error.message : String(error);
       if (rootFailure === reason) return;
       rootFailure = reason;
-      try { console.warn(`[GitRelay] Initialization failed: ${reason}. Will retry after a session prompt.`); } catch {}
+      try {
+        console.warn(`[GitRelay] Initialization failed: ${reason}. Will retry after a session prompt.`);
+      } catch {}
     };
-    const sessions = new Map<SessionID, { abort: AbortController; instance?: string; rejoin?: boolean; active?: Promise<void> }>();
+    const sessions = new Map<
+      SessionID,
+      { abort: AbortController; instance?: string; rejoin?: boolean; active?: Promise<void> }
+    >();
     const optIns = new Set<SessionID>();
     const draining = new Set<Promise<void>>();
     const lookups = new Map<SessionID, Set<{ cancelled: boolean; abort: AbortController }>>();
     const abort = new AbortController();
     let eventAbort: AbortController | undefined;
     let rootProbe: Promise<string | undefined> | undefined;
-    let rootRetryAt = 0, rootDelay = 5000;
+    let rootRetryAt = 0,
+      rootDelay = 5000;
     const probeRoot = (): Promise<string | undefined> => {
       if (rootProbe) return rootProbe;
       if (performance.now() < rootRetryAt) return Promise.resolve(undefined);
       rootProbe = (async () => {
         try {
           const current = await watchRoot(ctx.location.directory, abort.signal);
-          if (root !== undefined && root !== current) throw new Error("Git worktree root changed; reload the plugin before resuming");
+          if (root !== undefined && root !== current)
+            throw new Error("Git worktree root changed; reload the plugin before resuming");
           root = current;
           rootFailure = undefined;
           rootDelay = 5000;
@@ -49,28 +56,54 @@ export default {
             rootDelay = Math.min(rootDelay * 2, 60_000);
           }
           return undefined;
-        } finally { rootProbe = undefined; }
+        } finally {
+          rootProbe = undefined;
+        }
       })();
       return rootProbe;
     };
     let timer: ReturnType<typeof setInterval> | undefined;
     const ref = process.env.WORKTREE_MAIN_REF ?? "refs/heads/main";
     const deferred = new Error("Establish baseline without recursively prompting");
-    const warn = (error: unknown) => { try { console.warn(`[GitRelay] ${error instanceof Error ? error.message : String(error)}`); } catch {} };
-    const belongs = (session: Awaited<ReturnType<typeof ctx.session.get>>) => !session.parentID && session.location.directory === ctx.location.directory;
+    const warn = (error: unknown) => {
+      try {
+        console.warn(`[GitRelay] ${error instanceof Error ? error.message : String(error)}`);
+      } catch {}
+    };
+    const belongs = (session: Awaited<ReturnType<typeof ctx.session.get>>) =>
+      !session.parentID && session.location.directory === ctx.location.directory;
     const instanceOf = (session: Awaited<ReturnType<typeof ctx.session.get>>) => {
-      if (!Number.isFinite(session.time?.created) || session.time.created < 0) throw new Error("OpenCode session creation time is missing or invalid; subscription preserved without delivery");
+      if (!Number.isFinite(session.time?.created) || session.time.created < 0)
+        throw new Error(
+          "OpenCode session creation time is missing or invalid; subscription preserved without delivery",
+        );
       return hash([resolve(process.env.XDG_DATA_HOME || homedir()), session.time.created]);
     };
 
-    function getSession(id: SessionID, signal: AbortSignal, underlying?: (pending: ReturnType<typeof ctx.session.get>) => void): ReturnType<typeof ctx.session.get> {
+    function getSession(
+      id: SessionID,
+      signal: AbortSignal,
+      underlying?: (pending: ReturnType<typeof ctx.session.get>) => void,
+    ): ReturnType<typeof ctx.session.get> {
       signal.throwIfAborted();
       const pending = ctx.session.get({ sessionID: id }, { signal });
       underlying?.(pending);
       return new Promise((resolve, reject) => {
-        const aborted = () => { signal.removeEventListener("abort", aborted); reject(signal.reason); };
+        const aborted = () => {
+          signal.removeEventListener("abort", aborted);
+          reject(signal.reason);
+        };
         signal.addEventListener("abort", aborted, { once: true });
-        pending.then((session) => { signal.removeEventListener("abort", aborted); resolve(session); }, (error) => { signal.removeEventListener("abort", aborted); reject(error); });
+        pending.then(
+          (session) => {
+            signal.removeEventListener("abort", aborted);
+            resolve(session);
+          },
+          (error) => {
+            signal.removeEventListener("abort", aborted);
+            reject(error);
+          },
+        );
         if (signal.aborted) aborted();
       });
     }
@@ -79,8 +112,15 @@ export default {
       const state = sessions.get(id);
       if (!state || state.active || abort.signal.aborted) return state?.active ?? Promise.resolve();
       state.active = (async () => {
-        const options = { cwd: ctx.location.directory, ref, adapter: "opencode", session: id, instance: state.instance, signal: state.abort.signal };
-        if (!await sessionActivation(options)) {
+        const options = {
+          cwd: ctx.location.directory,
+          ref,
+          adapter: "opencode",
+          session: id,
+          instance: state.instance,
+          signal: state.abort.signal,
+        };
+        if (!(await sessionActivation(options))) {
           state.abort.abort();
           sessions.delete(id);
           maintainTimer();
@@ -98,28 +138,56 @@ export default {
           return;
         }
         if (state.rejoin) {
-          await joinSession({ cwd: ctx.location.directory, ref, adapter: "opencode", session: id, instance: state.instance, signal: state.abort.signal });
+          await joinSession({
+            cwd: ctx.location.directory,
+            ref,
+            adapter: "opencode",
+            session: id,
+            instance: state.instance,
+            signal: state.abort.signal,
+          });
           state.rejoin = false;
         }
         await consumeMailbox({
-          cwd: ctx.location.directory, ref, adapter: "opencode", session: id, instance: state.instance, signal: state.abort.signal, deliverIndividually: true,
+          cwd: ctx.location.directory,
+          ref,
+          adapter: "opencode",
+          session: id,
+          instance: state.instance,
+          signal: state.abort.signal,
+          deliverIndividually: true,
           async deliver(notifications, location) {
             if (initial) throw deferred;
             // V2 durably admits queued input; the host handles busy sessions and idle wake-up.
             for (const notification of notifications) {
               state.abort.signal.throwIfAborted();
-              if (!await sessionActivation(options)) return false;
+              if (!(await sessionActivation(options))) return false;
               const target = await getSession(id, state.abort.signal);
-              if (!belongs(target) || instanceOf(target) !== state.instance) throw new Error("OpenCode session changed before delivery; unread event preserved");
-              await ctx.session.prompt({ sessionID: id, id: `msg_${hash(["git-relay", location!.repository.id, location!.sessionKey, notification.event.id])}`, text: formatNotifications([notification]), delivery: "queue", metadata: { source: "git-relay" } }, { signal: state.abort.signal });
+              if (!belongs(target) || instanceOf(target) !== state.instance)
+                throw new Error("OpenCode session changed before delivery; unread event preserved");
+              await ctx.session.prompt(
+                {
+                  sessionID: id,
+                  id: `msg_${hash(["git-relay", location!.repository.id, location!.sessionKey, notification.event.id])}`,
+                  text: formatNotifications([notification]),
+                  delivery: "queue",
+                  metadata: { source: "git-relay" },
+                },
+                { signal: state.abort.signal },
+              );
               const accepted = await getSession(id, state.abort.signal);
-              if (!belongs(accepted) || instanceOf(accepted) !== state.instance) throw new Error("OpenCode session changed during delivery; outcome unknown and event preserved");
+              if (!belongs(accepted) || instanceOf(accepted) !== state.instance)
+                throw new Error("OpenCode session changed during delivery; outcome unknown and event preserved");
             }
           },
         });
-      })().catch((error) => {
-        if (error !== deferred && !state.abort.signal.aborted) warn(error);
-      }).finally(() => { state.active = undefined; });
+      })()
+        .catch((error) => {
+          if (error !== deferred && !state.abort.signal.aborted) warn(error);
+        })
+        .finally(() => {
+          state.active = undefined;
+        });
       return state.active;
     }
 
@@ -135,7 +203,8 @@ export default {
           for (const [id, sequence] of retries) {
             if (retrying.has(id)) continue;
             if (retrying.size >= 128) break;
-            retries.delete(id); retries.set(id, sequence);
+            retries.delete(id);
+            retries.set(id, sequence);
             retrying.add(id);
             void enroll(id, true);
             if (++started === 8) break;
@@ -143,7 +212,8 @@ export default {
         }, 5000);
         timer.unref?.();
       } else if (!sessions.size && !retries.size && timer) {
-        clearInterval(timer); timer = undefined;
+        clearInterval(timer);
+        timer = undefined;
       }
     }
     async function enroll(id: SessionID, retry = false) {
@@ -156,16 +226,35 @@ export default {
           pending = lookups.get(id) ?? new Set();
           lookups.set(id, pending);
           pending.add(token);
-          const session = await getSession(id, AbortSignal.any([abort.signal, token.abort.signal]), retry ? (operation) => {
-            underlyingStarted = true;
-            void operation.then(() => retrying.delete(id), () => retrying.delete(id));
-          } : undefined);
+          const session = await getSession(
+            id,
+            AbortSignal.any([abort.signal, token.abort.signal]),
+            retry
+              ? (operation) => {
+                  underlyingStarted = true;
+                  void operation.then(
+                    () => retrying.delete(id),
+                    () => retrying.delete(id),
+                  );
+                }
+              : undefined,
+          );
           if (abort.signal.aborted || token.cancelled) return;
           const inScope = belongs(session);
           if (inScope || (retries.get(id) ?? 0) <= sequence) retries.delete(id);
-          if (!inScope) { if ((retries.get(id) ?? 0) <= sequence) optIns.delete(id); return; }
+          if (!inScope) {
+            if ((retries.get(id) ?? 0) <= sequence) optIns.delete(id);
+            return;
+          }
           const instance = instanceOf(session);
-          const options = { cwd: ctx.location.directory, ref, adapter: "opencode", session: id, instance, signal: AbortSignal.any([abort.signal, token.abort.signal]) };
+          const options = {
+            cwd: ctx.location.directory,
+            ref,
+            adapter: "opencode",
+            session: id,
+            instance,
+            signal: AbortSignal.any([abort.signal, token.abort.signal]),
+          };
           let enabled = await sessionActivation(options);
           if (optIns.has(id) && !enabled) {
             enabled = await sessionActivation(options, true);
@@ -196,12 +285,16 @@ export default {
       }
     }
     const registration = await ctx.session.hook("prompt", async (event) => {
-      if (abort.signal.aborted || event.metadata?.source === "git-relay" || event.metadata?.source === "worktree-relay") return;
+      if (abort.signal.aborted || event.metadata?.source === "git-relay" || event.metadata?.source === "worktree-relay")
+        return;
       const request = requestedActivation(event.prompt?.text);
       if (request === false) {
         optIns.delete(event.sessionID);
         retries.delete(event.sessionID);
-        for (const token of lookups.get(event.sessionID) ?? []) { token.cancelled = true; token.abort.abort(); }
+        for (const token of lookups.get(event.sessionID) ?? []) {
+          token.cancelled = true;
+          token.abort.abort();
+        }
         const state = sessions.get(event.sessionID);
         state?.abort.abort();
         sessions.delete(event.sessionID);
@@ -213,28 +306,60 @@ export default {
               draining.add(active);
               void active.finally(() => draining.delete(active));
             }
-            await sessionActivation({ cwd: ctx.location.directory, ref, adapter: "opencode", session: event.sessionID, instance: state.instance, signal: abort.signal }, false);
+            await sessionActivation(
+              {
+                cwd: ctx.location.directory,
+                ref,
+                adapter: "opencode",
+                session: event.sessionID,
+                instance: state.instance,
+                signal: abort.signal,
+              },
+              false,
+            );
           }
           await state?.active;
           const target = await getSession(event.sessionID, abort.signal);
           if (!belongs(target)) return;
-          const options = { cwd: ctx.location.directory, ref, adapter: "opencode", session: event.sessionID, instance: instanceOf(target), signal: abort.signal };
+          const options = {
+            cwd: ctx.location.directory,
+            ref,
+            adapter: "opencode",
+            session: event.sessionID,
+            instance: instanceOf(target),
+            signal: abort.signal,
+          };
           const enabled = await sessionActivation(options);
           await sessionActivation(options, false);
           if (enabled || state?.instance === options.instance) await leaveSession(options);
-        } catch (error) { if (!abort.signal.aborted) warn(error); }
+        } catch (error) {
+          if (!abort.signal.aborted) warn(error);
+        }
         return;
       }
       if (request === true) {
         const state = sessions.get(event.sessionID);
-        if (state && !await sessionActivation({ cwd: ctx.location.directory, ref, adapter: "opencode", session: event.sessionID, instance: state.instance, signal: abort.signal })) {
+        if (
+          state &&
+          !(await sessionActivation({
+            cwd: ctx.location.directory,
+            ref,
+            adapter: "opencode",
+            session: event.sessionID,
+            instance: state.instance,
+            signal: abort.signal,
+          }))
+        ) {
           state.abort.abort();
           sessions.delete(event.sessionID);
           await state.active;
         }
       }
       if (request === true && !sessions.has(event.sessionID)) {
-        if (optIns.size >= 128 && !optIns.has(event.sessionID)) { warn(new Error("Too many pending opt-ins; retry after a session is enrolled.")); return; }
+        if (optIns.size >= 128 && !optIns.has(event.sessionID)) {
+          warn(new Error("Too many pending opt-ins; retry after a session is enrolled."));
+          return;
+        }
         optIns.add(event.sessionID);
         watchEvents();
       }
@@ -253,7 +378,10 @@ export default {
               if (event.type !== "session.deleted") continue;
               optIns.delete(event.data.sessionID);
               retries.delete(event.data.sessionID);
-              for (const token of lookups.get(event.data.sessionID) ?? []) { token.cancelled = true; token.abort.abort(); }
+              for (const token of lookups.get(event.data.sessionID) ?? []) {
+                token.cancelled = true;
+                token.abort.abort();
+              }
               maintainTimer();
               const state = sessions.get(event.data.sessionID);
               if (!state) continue;
@@ -266,7 +394,9 @@ export default {
               }
               maintainTimer();
             }
-          } catch (error) { if (!signal.aborted) warn(error); }
+          } catch (error) {
+            if (!signal.aborted) warn(error);
+          }
           if (!signal.aborted) {
             await delay(backoff, undefined, { signal }).catch(() => {});
             backoff = Math.min(backoff * 2, 60_000);

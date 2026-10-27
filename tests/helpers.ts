@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { addWorktree } from "../src/core/git.ts";
 
 export function git(cwd: string, ...args: string[]): string {
-  return execFileSync("git", ["-C", cwd, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  return execFileSync(
+    "git",
+    ["-C", cwd, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", ...args],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
 }
 
 export async function fixture(t: { after(fn: () => void | Promise<void>): void }) {

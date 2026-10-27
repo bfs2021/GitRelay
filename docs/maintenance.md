@@ -18,7 +18,6 @@ git-relay join  --cwd /project/worktree-B --agent codex --session native-session
 git-relay sessions --cwd /project/worktree-B
 ```
 
-
 - `leave` saves `closedAt`, excluding the session from future broadcasts and upstream events.
 - Existing unread events, receipts, and baselines remain. **Leaving is not acknowledgement and does not make unread events eligible for cleanup.**
 - Ordinary checks, hooks, and receiver restarts do not reopen closed sessions. Use `join` explicitly.
