@@ -1,5 +1,39 @@
 # GitRelay performance benchmarks
 
+## Per-ref daemon cache ownership (2026-10-27, Asia/Singapore)
+
+This is a historical measurement of the cache fast path; current consumers
+synchronize on every consume. See the later always-synchronize measurements.
+
+An isolated local Git fixture compared the prior code with the per-ref daemon
+token change, using 20 alternating runs per variant, a fresh prebuilt state
+directory per run, warm filesystem caches and an AbortSignal. Median full
+`consumeMailbox` time without a daemon was 26.618 ms before and 27.123 ms
+after; with a matching synthetic daemon heartbeat it was 18.550 ms before and
+18.259 ms after. Separately, a lock-held `synchronizeRef` call measured
+15.073 ms before and 14.232 ms after. These small samples do not establish a
+performance improvement or cover cold caches, CPU, real daemons, concurrent
+consumers, remote filesystems or real-host latency. Script and source hashes:
+`/tmp/gitrelay-daemon-token-final.G5KbxiiX/benchmark-v4.mjs`.
+
+## Experimental launcher revision checks (2026-10-27, Asia/Singapore)
+
+A private Codex/OpenCode bootstrap prototype tried to fix a startup/upgrade
+race by reading state twice and checking revision markers. On macOS arm64,
+20 alternating warm-cache imports of a synthetic no-op runtime with 1,000
+markers had medians of 2.00 ms for the existing Codex bootstrap and 61.60 ms
+for a prototype that opened every marker. The corresponding OpenCode medians
+were 1.89 and 57.52 ms. A second prototype that validated only the selected
+latest marker measured 5.50 ms and 4.78 ms respectively. At 1,000 markers its
+median maximum RSS was about 42.7 MiB versus 40.2 MiB for the old bootstrap;
+these values include the Node process baseline.
+
+The second prototype has different integrity semantics: a damaged older
+marker does not stop startup, although the installer still rejects it on a
+later install. Neither prototype was adopted; legacy migration, filesystem
+races, cold-cache performance, Windows and real-host behavior remain
+unverified. The fixture was `/tmp/gitrelay-bootstrap-safe-v2.prfn1qC6/bench-latest.mjs`.
+
 ## Path overlap lookup (2026-10-27, Asia/Singapore)
 
 The matcher sorts local paths and looks up possible descendants by prefix,
@@ -18,6 +52,103 @@ post-GC heap was about 26 MiB before and 22 MiB after. A single synthetic
 construct before and 0/1/0 ms after, with post-GC heap about 113 versus 11 MiB.
 The three queries in that extreme case were shallow. These are matcher-only
 measurements, not whole-delivery timings or real filesystem workloads.
+
+## Conservative submodule detection (2026-10-27, Asia/Singapore)
+
+The relevance check scans Git's index for gitlinks and treats each as a
+potential overlap. Each upstream event can cause another index scan; a
+consumer does not reuse the scan across events because the index may change.
+The scan streams records, decodes only gitlink paths and bounds each pending
+record and all retained gitlink path bytes to 16 MiB each. Those limits are not
+a total-memory limit: buffer growth, strings and stream buffers add memory.
+An invalid gitlink name or an exceeded limit preserves unread events.
+
+On macOS arm64 with Git 2.54.0 and Node 22.23.2, a synthetic index of 300,000
+tracked paths produced 20.1 MB of `ls-files --stage` output. Five warm-cache
+private-prototype scans took 87.75–134.11 ms, median 89.91 ms. This is only the
+added scan, not an end-to-end delivery benchmark or a real large repository.
+In a separate extreme fixture where all 300,000 tracked worktree files were
+missing, two alternating batches of eight full `worktreeFiles` calls took
+7.410/7.226 seconds before and 7.276/7.102 seconds with an earlier equivalent
+prototype. Existing diff work and run-to-run noise dominate this example; it
+does not establish a speedup or characterize normal workloads.
+
+The scan kills the direct Git process and closes its pipes on cancellation,
+failure or timeout; an uncooperative wrapper's detached descendants may
+survive. Windows, remote filesystems, and concurrent index modification have
+not been verified for this change.
+
+## Current single-message snapshot (2026-10-27, Asia/Singapore)
+
+One isolated warm-cache run of `node scripts/benchmark-delivery.mjs` on macOS
+arm64, Node 22.23.2 and Git 2.54.0 used linked worktrees, no daemon and five
+messages. It verified the delivered markers, receipts and an empty subsequent
+check. Median CLI startup was 36.8 ms; median send, check and end-to-end times
+were 54.8, 76.6 and 132.7 ms. `/usr/bin/time -l` reported median check maximum
+RSS of 57,982,976 bytes, 0.05 s user CPU and 0.01 s system CPU for each sample.
+Its reported block input/output operations were zero; this does not prove zero
+filesystem I/O. Setup was excluded. The tested `dist` JavaScript manifest
+SHA-256 was `734c2ad9634ab46d9731ad7473a9c8015cb556917ee0897c79f46fbdbe246048`;
+the raw measurements are in the temporary directory
+`/private/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-delivery-measure-izbzw6fj/result.json`.
+This single run is a current baseline, not a controlled before/after comparison
+or a measurement of model latency, cold caches, Windows or larger backlogs.
+
+## Upstream publication recovery scan (2026-10-27, Asia/Singapore)
+
+The recovery change adds a full validation scan of retained event and trash files under the publication lock on each ref synchronization. It can recover an event published before its ref cursor was saved, even when the ref has subsequently advanced or reset. Its cost grows with retained state and repeated checks across refs.
+
+On macOS arm64, Node `22.23.2`, and Git `2.54.0 (Apple Git-157)`, an isolated temporary repository and state root contained 1,000 unrelated small message events with no recipients. With an unchanged ref, 15 sequential calls to `synchronizeRef` measured under `publish.lock` produced a 16.52 ms median and 18.18 ms maximum before the recovery scan, versus a 110.99 ms median and 170.03 ms maximum after it. Setup was excluded; filesystem caches were warm. The after run overlapped other local tests, while the baseline did not, so the difference is not an isolated statistical estimate. It measures ref synchronization, not end-to-end delivery, CPU, memory, disk I/O, cold-cache behavior, or multiple concurrent refs.
+
+The local measurement fixture is `/tmp/gitrelay-publication-bench.mts`; while that temporary file remains available, rerun the current implementation from the repository root with `node --experimental-strip-types --test /tmp/gitrelay-publication-bench.mts`. The pre-change source was not retained as a standalone benchmark snapshot, so this command alone cannot reproduce the baseline. See [maintenance](maintenance.md#upstream-publication-recovery-and-upgrades) for recovery and mixed-version limitations. A per-ref journal with one-time legacy scanning would need a verified protocol upgrade and stopped older participants; the current implementation does not implement such an upgrade.
+
+The Git ref lookup, cursor read and event scan now run concurrently under the
+publication lock. They all settle before an error is propagated or the lock
+is released; errors retain their prior ref, cursor, then event priority. This
+also means a failed ref lookup waits for an event scan that was already
+started, so a slow filesystem or large backlog can delay reporting that error.
+Cancellation likewise waits for in-flight file reads, which cannot be forcibly
+cancelled, before releasing the lock.
+In two isolated warm-cache experiments on macOS arm64, each alternating 16
+unchanged-ref calls per variant on the same temporary repository, the medians
+were 12.37/12.38 and 12.55/12.27 ms before/after with no retained events, and
+51.65/37.54 and 48.24/35.92 ms with 1,000 unrelated retained messages. Every
+call returned the expected commit. An independent repeat measured
+16.79/16.94 ms with no events and 64.48/51.06 ms with 1,000 events; the
+latter maximum was 112.63/194.05 ms. These samples do not show improved tail
+latency. Other local work could affect timings;
+this is not a real-agent latency, cold-cache or network-filesystem result.
+Injected delayed reads verified that a failed ref preserves its error and
+that cancellation leaves the event and cursor unchanged; both keep the lock
+until the scan settles. Interruption-recovery tests also passed. The compared
+private source copies and fixture are under
+`/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-perf-parallel-5fly28l5/`,
+which the operating system may remove.
+
+### Bounded scan experiments
+
+In an isolated snapshot on the same macOS arm64, Node and Git versions, increasing event-read batches from 32 to 64, 128 or 256 showed no reliable gain. For 1,000 small events, three alternating runs per batch each measured 15 unchanged-ref synchronizations; median ranges were 46.97–64.59 ms (32), 46.50–52.87 ms (64), 48.10–63.78 ms (128), and 48.31–52.78 ms (256). Removing event sorting in a separate experiment likewise showed no stable improvement at 1,000 or 10,000 events. Neither change was adopted.
+
+A separate synthetic test compared serial trash reads with 32 concurrent reads, alternating the variants 16 times per size in a temporary repository with warm caches. Median synchronization times in milliseconds were:
+
+| Small trash records | 0 | 1 | 10 | 100 | 1,000 |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| Serial | 16.62 | 14.16 | 14.62 | 22.20 | 87.58 |
+| 32 concurrent | 16.71 | 14.14 | 14.39 | 18.21 | 47.53 |
+
+The experiment showed little difference at 0–10 records and a larger benefit with accumulated trash. It does not establish how often such backlogs occur in actual use; 32 concurrent 2 MiB state reads could also require roughly 64 MiB of buffers before overhead, compared with one at a time. Tests checked first-error ordering for two corrupt files, preservation of their bytes and the cursor, and cancellation before the scan. Cancellation during reads and the lock remaining held until an entire concurrent batch settles were not fault-injected. The concurrent implementation was not adopted.
+
+Another isolated dry-run GC experiment compared its existing linear search for
+trash entries with lookup in the already-built trash ID set. With 10,000 small
+trash records and 1,000 event records, alternating three runs of each variant
+gave 678.70–712.31 ms for the existing code and 671.74–706.56 ms for the
+candidate. Each run checked the number of eligible and retained records. The
+overlapping timings and unusually large synthetic trash backlog do not establish
+a meaningful practical benefit, so the candidate was not adopted. The source
+snapshots, fixture and results are under the temporary directory reported by
+`/tmp/gitrelay-trash-gc-bench.py`; they may be removed by the operating system.
+
+These are local synthetic measurements, not real-client acceptance or CI results. Temporary evidence, while retained on the measurement machine: `/tmp/gitrelay-scan-matrix.py`, `/tmp/gitrelay-scan-nosort.py`, and `/tmp/gitrelay-read-variants.OYOuva/trash-sized.mts`. The fixtures use absolute paths to their isolated snapshots and need those snapshots to rerun.
 
 ## Reproduce
 
@@ -75,7 +206,7 @@ Only the read path changed:
 
 ## Small-file read overhead (2026-10-27, Asia/Singapore)
 
-`readJson` now uses the standard library's callback-backed `fs.readFile`, adapted once with `util.promisify`. This reduces small-file read overhead while preserving the Promise API, the pre-read 2 MiB size check, UTF-8 decoding, JSON parsing, and error propagation. Every receipt is still read and validated on every scan; there is no cache or state-format change.
+At this measurement, `readJson` used the standard library's callback-backed `fs.readFile`, adapted once with `util.promisify`. The later bounded state-file reader described below replaced it. Every receipt was still read and validated on every scan; there was no cache or state-format change.
 
 Measured against commit `c8e732c` on macOS arm64, Node `22.23.2`, Git `2.54.0 (Apple Git-157)`, using the unchanged benchmark above. Values are milliseconds; before and after are separate runs with the same dataset sizes.
 
@@ -172,7 +303,7 @@ Same macOS arm64, Node `22.23.2`, Git `2.54.0 (Apple Git-157)` as above. All thr
 
 Session discovery reads at most 32 records concurrently, preserves directory order, validates each record, and settles the whole batch before propagating an error. At 1,000 sessions this reduced elapsed time by about 79–81%.
 
-GC reuses successfully validated migration status only inside one invocation holding `publish.lock`, which also protects the relay's session metadata writes. There is no cache across GC calls. Every receipt is still read and validated independently under its recipient lock; retention calculation and journaled deletion remain unchanged. For 1,000 events, repeated session metadata reads fall from 3,000 to three, and measured GC time fell about 21–23%. This does not remove its per-event lock cost or establish throughput under competing consumers. Regressions cover multiple session-read batches, corrupt session records, migration changes between collections, missing session records, and an unread event after another event from the same session was collected. `npm run typecheck` and all 126 tests passed.
+In this historical measurement, GC reused successfully validated migration status only inside one invocation holding `publish.lock`, which also protected the relay's session metadata writes. There was no cache across GC calls. Each receipt was read and validated independently while its recipient lock was held; retention calculation and journaled deletion were unchanged. For 1,000 events, repeated session metadata reads fell from 3,000 to three, and measured GC time fell about 21–23%. This did not remove its per-event lock cost or establish throughput under competing consumers. The current GC uses a sequential recipient-lock barrier under `publish.lock`; see [maintenance](maintenance.md#concurrency-and-interrupted-cleanup). Regressions cover multiple session-read batches, corrupt session records, migration changes between collections, missing session records, and an unread event after another event from the same session was collected. `npm run typecheck` and all 126 tests passed.
 
 ## Concurrent CLI consumers (2026-10-27, Asia/Singapore)
 
@@ -209,7 +340,7 @@ npm run build
 node scripts/benchmark-pi-history.mjs
 ```
 
-This fixture uses the installed pi `1.4.0` SDK's real in-memory `SessionManager`, with 1,000 or 10,000 native history entries and 1,000 already accepted relay messages whose local receipts must be reconstructed. It is an adapter/core benchmark, not a live interactive pi acceptance test. Each sample removes only its own temporary receipts, times one watcher tick, and checks that every receipt is recreated without queueing a duplicate or reporting warnings. Three samples form each median. Setup and SDK import are excluded.
+The historical fixture used the installed pi `1.4.0` SDK's real in-memory `SessionManager`, with 1,000 or 10,000 native history entries and 1,000 already accepted relay messages whose local receipts had to be reconstructed. It was an adapter/core benchmark, not a live interactive pi acceptance test. Each sample removed only its own temporary receipts, timed one watcher tick, and checked that every receipt was recreated without queueing a duplicate or reporting warnings. Three samples formed each median. Setup and SDK import were excluded. The reproduction script now uses a persistent session file for the later durability check below, so its current results are not directly comparable to this historical in-memory dataset.
 
 | Native entries | Before 1, ms | Before 2, ms | After 1, ms | After 2, ms |
 | ---: | ---: | ---: | ---: | ---: |
@@ -220,6 +351,14 @@ The small baseline varied substantially; it does not support a stable percentage
 
 Within a single watcher check, native event IDs are reused only while both session ID and leaf ID remain unchanged. Both are checked for every acknowledgement lookup, so a native append or branch switch invalidates the set immediately. The set is discarded between checks. Queued follow-ups still require native acceptance before writing receipts; delivery and retry semantics are unchanged. Regression coverage uses the real SDK to append an acceptance during a scan and then rewind the native branch. Existing queued-message, cancellation, and duplicate tests remain in place. `npm run typecheck` and all 127 tests passed.
 
+### Persistent session confirmation
+
+The watcher now checks the native JSONL file and its parent chain before treating a pi message as durable. It reads the file line by line and caches only parent/type metadata and GitRelay message payloads while the file identity, size, nanosecond modification and change times remain unchanged. A native message present only in memory is skipped without a receipt; a persisted session with a missing or corrupt branch is paused with a recovery warning. This protects unread events when pi updates its in-memory branch but writing the native file fails. A changed or truncated file is revalidated; this does not guarantee storage hardware has flushed bytes to stable media.
+
+The current `benchmark-pi-history.mjs` creates actual pi session files with 1,000 or 10,000 history entries and reconstructs 1,000 receipts in three ticks. The first tick includes reading the changed session file; later ticks reuse the validated snapshot. It records the file size and the first and median elapsed times, and verifies all receipts and absence of duplicate queue entries. The comparison used the `watch.ts` from commit `c35de21` as the baseline in an otherwise identical temporary build with the current shared consumer; the modified watcher was measured in a second temporary build. In two alternating local runs on macOS arm64 with Node `22.23.2` and pi `1.4.0`, the 1,000-entry files were about 280 KB and the 10,000-entry files about 1.52 MB. First-tick times before confirmation were 215–217 ms and 225–283 ms respectively; after confirmation they were 225–234 ms and 241–243 ms. Concurrent system activity and the small sample count make this insufficient to claim a stable overhead. All samples passed their assertions. After validating a stored entry, the watcher also makes one synchronous metadata check immediately before confirming it; five local warm-cache loops of 1,000 `statSync` calls took 1.77–2.81 ms in total, excluding receipt writes. This is not a latency bound for a network filesystem.
+
+`node --expose-gc scripts/benchmark-pi-large-history.mjs` creates a separate session with forty 1 MiB unrelated entries, measures a first watcher tick and reports file size, CPU and process memory. In two alternating runs with the same setup and baseline build, its 41.95 MB file took 49–76 ms before confirmation and 109–114 ms afterward; peak RSS grew by about 11.8 MiB in the modified process versus no additional recorded peak in the baseline. Those are single-process warm-cache measurements, not a guarantee for network filesystems or arbitrary history sizes. The new read is a deliberate reliability cost; the file must be reread after each change.
+
 ## Large ignored file trees (2026-10-27, Asia/Singapore)
 
 `scripts/benchmark-worktree.mjs` now additionally creates 1,000, 10,000, then 100,000 ignored files across directories of 100 files each. After one warm-up, it measures five worktree scans plus matcher construction, asserting the complete filename set, a matching file, file/directory prefix overlap, and rejection of a nonexistent sibling. Setup and assertions are excluded from timing; temporary files are removed afterward.
@@ -228,11 +367,13 @@ On the same local runtime, medians were 49.1, 46.9, and 133.9 ms respectively. T
 
 ## Successful atomic writes (2026-10-27, Asia/Singapore)
 
-After a successful `rename`, the temporary JSON path no longer exists. `writeJson` now performs temporary-file removal only on failure, eliminating one redundant filesystem removal attempt per successful state write. Write/rename/serialization errors still clean up and propagate. Regression tests verify replacement contents, private file permissions, preservation of the old value on serialization failure, preservation of an obstructing directory, missing-parent errors, and absence of leftover temporary files. `npm run typecheck` and all 128 tests passed.
+At this measurement, `writeJson` removed temporary files only on failure, eliminating one redundant removal attempt after a successful `rename`. Later ownership checks changed failure handling: an incomplete or unverified temporary file is now preserved for inspection rather than always removed. The historical regression tests checked replacement contents, private file permissions, old-value preservation on serialization failure, obstructing directories and missing-parent errors. `npm run typecheck` and all 128 tests passed for that snapshot.
 
 With the preceding pi optimization already present, two subsequent native-history runs measured 210.1/217.4 ms at 1,000 entries and 304.4/228.8 ms at 10,000 entries; all assertions passed and each recovery still traversed the branch once. These variable end-to-end timings do not establish an additional consistent speedup for the write change. The verified reduction is one unnecessary filesystem operation per successful write.
 
-## Auto-sync operation checks (2026-10-27, Asia/Singapore)
+## Historical auto-sync operation checks (2026-10-27, Asia/Singapore)
+
+These measurements predate the temporary shutdown of automatic synchronization. The benchmark below expects the old successful sync and cannot pass while synchronization is blocked. Current code performs none of these operation-marker checks; the old tests are retained as TODO pending a safe implementation.
 
 ```sh
 npm run build
@@ -241,7 +382,41 @@ node scripts/benchmark-sync.mjs
 
 The benchmark uses an isolated linked worktree and local-file remote. It times seven already-up-to-date `syncBranch` calls after one warm-up, verifies the result, HEAD, file content, and clean worktree after every call, and removes its temporary state. The median fell from 188.6 ms to 140.1 and 139.8 ms in two optimized runs, about 26% less time. This excludes network latency and does not imply a comparable percentage for Internet fetches.
 
-Git operation-marker checks now run in batches of at most four. All seven markers still use Git's own per-worktree path resolution and are considered in the original order. Each batch settles before an error or blocked result releases the writer lock. Tests independently verify all seven markers in a linked worktree, in addition to the existing dirty-worktree, ignored-file, divergence, missing-upstream, and failed-fetch cases.
+At that measurement, Git operation-marker checks ran in batches of at most four. All seven markers used Git's per-worktree path resolution and were considered in the original order. Each batch settled before an error or blocked result released the writer lock. Tests covered the seven markers, dirty worktrees, ignored files, divergence, missing upstreams, and failed fetches for that historical implementation.
+
+## CLI delivery baseline (2026-10-27, Asia/Singapore)
+
+```sh
+npm run build
+node scripts/benchmark-delivery.mjs
+```
+
+This script requires Node.js 22.19+ and Git. It creates and removes a temporary repository, a linked receiver worktree and an isolated state directory; it disables system and user Git configuration and Git hooks for the fixture. One receiver registers before a sender publishes five distinct unfiltered messages. Each `check` starts after `send` returns, and the script verifies each message, its `delivered` receipt, and an empty follow-up check. One warm-up and setup are excluded from startup timing. The measurement includes CLI process startup and local Git work; it does not include a real coding agent, model response, or a polling interval.
+
+On macOS arm64, Node `22.23.2`, Git `2.54.0 (Apple Git-157)`, the five-sample median for `--help` startup was 101.0 ms; `send` was 87.4 ms; the receiver `check` after the send returned was 102.7 ms; and send start through check completion was 187.4 ms. A check completes after its output and receipt are written. A preceding exploratory run under different Git configuration handling reported 36.2, 63.4, 89.4 and 151.3 ms respectively. Other tests and reviews were running concurrently, so this variation does not establish a performance change or bottleneck.
+
+On macOS the script invokes `/usr/bin/time -l` for each check and reports its raw output; otherwise resource fields are unavailable. In the recorded run, check CPU time was 0.05–0.09 seconds user and 0.02–0.04 seconds system, with maximum resident size 54.7–55.2 MB. The tool reported zero block input and output operations, which does not provide a meaningful count of filesystem bytes or prove an absence of I/O. The separate measurement below adds per-process I/O counters; full process-tree I/O and real-host delivery latency remain unmeasured. These are baseline measurements, not a before-and-after optimization comparison.
+
+## macOS per-process I/O baseline (2026-10-27, Asia/Singapore)
+
+```sh
+npm run build
+node scripts/benchmark-darwin-io.mjs
+```
+
+This macOS-only benchmark requires `clang`, Node.js 22.19+ and Git. It compiles a temporary helper, creates an isolated repository, linked worktree and state directory, and removes them afterward. The helper waits for the CLI process to exit without reaping it, reads the kernel's `proc_pid_rusage` v4 counters, then reaps it. A 1 MiB write plus `fsync` positive control must show at least 1 MiB of logical writes and a nonzero disk-write count. Five messages are sent and received, with each event, receipt and a final empty check asserted; setup and one startup warm-up are excluded. End-to-end timing starts before `send` and ends when `check` exits, before inspecting receipts. The script fingerprints compiled JavaScript before and after the measurement and rejects a difference; it cannot detect a change that was later reverted.
+
+On macOS arm64, Node `22.23.2` and Git `2.54.0 (Apple Git-157)`, the five-sample medians were:
+
+| CLI operation | Wall time | User / system CPU | Peak physical footprint | Disk read / write accounting | Logical writes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `--help` | 33.63 ms | 28.56 / 5.66 ms | 16,943,168 B | 0 / 0 B | 0 B |
+| `send` | 55.47 ms | 32.70 / 8.26 ms | 18,352,696 B | 0 / 12,288 B | 172,032 B |
+| `check` | 75.92 ms | 36.10 / 10.73 ms | 18,762,320 B | 0 / 24,576 B | 303,104 B |
+
+Median send start through check completion was 136.32 ms. The positive control reported 1,048,576 bytes of disk writes and 1,089,536 logical write bytes. The compiled JavaScript fingerprint was `f4ea0fad0941157cdb39f271969e076bccfa5ef91bc221894038b2f6d7dd41e5`. Individual samples, including variable logical-write accounting, are emitted as JSON. Other work was running concurrently; these are not a controlled before/after comparison and do not identify a specific optimization.
+
+The counters describe only the direct Node process, not the Git subprocesses it starts or the complete filesystem workload. Kernel caching, asynchronous writes and accounting availability affect the disk counters: a zero does not mean no files were read or written, and logical writes are not equivalent to device writes. Peak physical footprint and CPU use the process's `proc_pid_rusage` counters; physical footprint is not RSS. The benchmark does not exercise a coding agent or its polling interval, cold cache, another operating system, or a physical-disk throughput measurement. No production behavior was changed based on these measurements.
 
 ## Conclusions and limits
 
@@ -269,3 +444,214 @@ The final source review also checked hook input limits, pi/OpenCode polling over
 Final `npm run typecheck` and `npm test` passed all 129 tests after the overflow fallback review. The mailbox, history, worktree, maintenance, concurrency, native-history and local-sync benchmarks all completed their self-checks. Timing suites ran sequentially, separate from unit tests. The remaining unmeasured environments above are explicit limits, not claimed results. No further local optimization is currently supported by the collected evidence without changing the stated tradeoffs.
 
 `npm pack --dry-run --json` succeeded with 70 package files. The manifest contains all seven benchmark scripts and the performance guide; all six changed compiled modules were compared with the current TypeScript build output and matched exactly. No dependency, Git directory, or benchmark state directory was included.
+
+## Bounded state-file reads (2026-10-27, Asia/Singapore)
+
+The state reader opens the path nonblocking, verifies that the opened descriptor is a regular file, and enforces the 2 MiB limit against the bytes actually read. A missing path remains missing, while a dangling symlink and non-regular file are errors. Invalid UTF-8 is rejected rather than silently replaced and acknowledged. This prevents a FIFO or a file that grows after inspection from hanging a scan or bypassing the read limit; it also means the earlier callback-backed `readFile` optimization described above no longer describes the current reader. The measurements below predate the strict UTF-8 check.
+
+Two alternating runs of `scripts/benchmark.mjs` compared identical isolated builds with only the compiled state reader changed. The macOS arm64 host used Node `22.23.2`, Git `2.54.0`, three sessions, retained events and warm filesystem caches; other tasks were running concurrently. Values are milliseconds, and each range contains two runs:
+
+| Events / daemon | Three-session empty poll before | After | Recover 32 before | After |
+| --- | ---: | ---: | ---: | ---: |
+| 100 / off | 89.1–234.3 | 99.2–106.2 | 125.8–313.6 | 154.4–255.7 |
+| 100 / on | 48.0–126.9 | 55.8–63.9 | 71.2–129.1 | 80.0–85.0 |
+| 1,000 / off | 146.8–202.8 | 171.4–194.1 | 202.3–249.9 | 308.9–385.1 |
+| 1,000 / on | 92.8–102.8 | 113.6–124.1 | 129.6–153.0 | 153.8–163.2 |
+| 10,000 / off | 636.2–779.3 | 882.7–963.8 | 1,141.3–1,269.9 | 1,105.1–1,179.2 |
+| 10,000 / on | 739.3–1,208.4 | 876.1–948.2 | 859.8–1,093.9 | 1,185.2–1,238.4 |
+
+All benchmark self-checks passed for delivery, deduplication, receipts and daemon liveness. Some cases show additional elapsed time, especially the 10,000-event empty poll without the daemon, but load and cache variation prevent a stable percentage claim. A separate 2,000-file callback prototype did not show a consistent gain sufficient to justify substantially more error-handling code; the bounded reader remains in use. These measurements do not cover Windows, cold caches, network filesystems or complete agent/model latency. An external process can still replace a path after the descriptor has opened; the current read then observes the already-open file, not an atomic snapshot of later path changes.
+
+### Strict UTF-8 validation
+
+The mailbox benchmark was repeated in two isolated builds differing only in strict versus replacement UTF-8 decoding, in old/strict/strict/old order on the same macOS arm64 host with Node `22.23.2` and Git `2.54.0`. Four runs passed their delivery, receipt and deduplication self-checks. For 10,000 retained events without the daemon, three-session empty polling ranged from 845.5–970.3 ms with replacement decoding and 853.0–906.9 ms with strict decoding; recovery of 32 messages ranged from 1,092.5–1,124.1 ms and 1,102.1–1,279.1 ms respectively. Other tasks ran concurrently and caches were warm; two runs per variant do not establish a stable performance difference. Output and build fingerprints: `/tmp/gitrelay-utf8-bench.lKAFpq/`.
+
+### Repository identity change
+
+Two isolated source snapshots, before and after the identity change, ran `scripts/benchmark-delivery.mjs` in old/new/new/old/old/new order on macOS arm64, Node `22.23.2`, Git `2.54.0`, with warm caches and no daemon. All six runs passed the marked-message, receipt and deduplication checks. Across the three runs per snapshot, median startup ranged from 35.6–38.7 ms before and 33.5–37.7 ms after; send from 56.8–60.3 to 59.4–61.3 ms; check from 75.7–82.9 to 79.5–87.0 ms; and send start through check completion from 132.5–144.8 to 139.0–147.3 ms. Median maximum RSS over 15 checks was 55,590,912 and 55,771,136 bytes. The two snapshots also differ in other code, and concurrent load and three runs per variant prevent attributing a stable change to identity alone. `/usr/bin/time -l` reported zero block I/O, which does not prove that no disk I/O occurred. Outputs and source fingerprints: `/tmp/gitrelay-identity-bench.1sKYpt/`.
+
+The CLI delivery benchmark was repeated after the later `writeJson` ownership and receipt-commit changes, again in old/new/new/old/old/new order. All six runs passed delivery, receipt and deduplication checks. Three-run median ranges were 51.5–58.7 ms before and 59.7–63.5 ms after for send, 69.4–80.2 and 79.5–90.8 ms for check, and 121.4–141.4 and 139.6–156.2 ms from send start through check completion. Both snapshots include other code differences; warm caches, concurrent load and three runs per side do not establish a stable percentage or isolate the cause. Evidence: `/tmp/gitrelay-writejson-benchmark.py` and `$TMPDIR/gitrelay-writejson-bench-bw8r1883/summary.json`.
+
+### Pending pi proof guard
+
+This is a historical snapshot of the proof guard alone, not a measurement of the current complete code. An isolated comparison of the pi native-history benchmark changed only the consumer proof guard, alternating old/new/new/old/old/new. All six runs passed their checks for 1,000 recovered receipts and no repeat delivery. Three-run median ranges for 1,000 history entries were 312.9–404.3 ms before and 312.0–375.1 ms after; for 10,000 entries they were 299.9–318.8 ms and 306.3–356.0 ms. Warm caches, concurrent load and three runs per side do not establish a stable percentage. The measured snapshot predates the additional synchronous confirmation-callback validation. Evidence: `/tmp/gitrelay-pi-guard-bench.ud28iO/summary.json`.
+
+### Installer digest stability checks
+
+An isolated macOS arm64, Node `22.23.2` test compared the initial nonblocking streaming digest with the later version that rechecks file and directory witnesses after traversal. For 1,000 small files, two warm-cache runs measured 92.9–93.0 ms before and 95.0–96.4 ms after; for 10,000 files, 824.7–876.1 ms and 848.5–850.2 ms. Digests matched. Whole-process peak RSS from `process.resourceUsage().maxRSS` was 79,456–79,568 and 78,416–78,432 KiB for 1,000 files, and 85,872–86,048 and 98,576–98,720 KiB for 10,000. The baseline lacked the final recheck and also used a larger buffer for small files; it was not the earlier `readFile` implementation. Two runs and uncontrolled external load do not establish a stable percentage. Evidence: `/tmp/gitrelay-digest-recheck-bench/results-optimized.json`.
+
+The final recheck detects changes to already-read entries during traversal, but is not a filesystem snapshot: a non-cooperating process can modify an entry after that entry is rechecked. Its witness storage grows with the number of files and directories. Windows, network filesystems and cold-cache behavior were not measured.
+
+### Auto-sync operation preflight
+
+A local bare-remote comparison on macOS, Node `22.23.2` and Git `2.54.0`
+measured up-to-date synchronization with warm caches. Identical isolated source
+snapshots differed only in the seven operation-path checks added before fetch;
+three alternating groups per variant each averaged five calls. The group means
+were 134.27, 129.74 and 132.58 ms before, versus 150.45, 143.80 and 152.04 ms
+after. Their medians were 132.58 and 150.45 ms, an observed 17.87 ms increase.
+The small sample and concurrent load do not establish a stable percentage;
+network, cold-cache and Windows performance were not measured. Each run checked
+that the branch, remote-tracking ref and clean worktree were unchanged. The
+preflight rejects undecodable operation paths before fetch can update a remote
+tracking ref; a second check after fetch blocks merge if an operation starts
+in the meantime. Evidence and the reproducible local harness are in
+`/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-sync-preflight-bench-k3a5dn7c/bench.mjs`.
+
+## Manual synchronization and daemon cache retention (2026-10-27, Asia/Singapore)
+
+A private candidate preserves a valid daemon token and its **original**
+`checkedAt` when a manual synchronization finds the same ref and event ID,
+with no pending publication to recover. It does not extend that observation's
+age; changes, missing fields and recovered publications clear the marker. The
+candidate was not merged. Without a separate failure-epoch mechanism, retaining
+an older observation after a later daemon failure can delay seeing a subsequent
+ref change relative to the current behavior that clears the token.
+
+An isolated macOS real-Git fixture used a synthetic live heartbeat, 500 small
+retained events, and 12 alternating warm-cache runs per variant. A manual
+synchronization preceded a second consumer. After each synchronization the
+fixture state was copied while excluding the retained publish lock; this is
+not original-location lock recovery or a real daemon test. Against the shared
+source containing the check-start timestamp change, full consumer time had
+medians of 61.762 ms before and 35.416 ms in the private candidate. The Node
+process's user/system CPU medians were 21.542/50.044 ms and 10.329/21.462 ms;
+they include Node worker threads but exclude Git subprocess CPU. Git ref
+queries occurred in 12/12 baseline calls and 0/12 candidate calls. The
+`resourceUsage` filesystem read/write block counters both had medians of zero;
+these warm-cache counters do not measure total bytes or disk bandwidth.
+
+A separate private combination with an unmerged daemon generation prototype
+used the same workload: median consumer time was 69.401 versus 36.527 ms,
+Node user/system CPU was 25.968/55.222 versus 12.192/25.729 ms, and extra
+ref queries were 12 versus zero. Two simulated-heartbeat tests verified the
+candidate preserves the exact prior generation and timestamp, and that a new
+generation falls back to direct synchronization. These checks do not validate a
+real daemon, concurrent publication locks, multi-ref scheduling, cold cache,
+Windows, power loss or end-to-end client behavior. The generation prototype
+used in this comparison predates a separate check-start timestamp fix.
+
+Evidence: `/tmp/gitrelay-ref-preserve.uqMhXX3k/` and
+`/tmp/gitrelay-combined-gen.P6tqcXE2/`; both retain their test data. No real
+daemon, GC, installer or client was started. The probes were invoked with an
+empty environment, isolated HOME/TMPDIR, disabled Git system/global config,
+and a preload that disables Node `rm` and `unlink`:
+
+```sh
+env -i PATH=/usr/bin:/bin HOME=/tmp/gitrelay-ref-preserve.uqMhXX3k \
+  TMPDIR=/tmp/gitrelay-ref-preserve.uqMhXX3k GIT_CONFIG_GLOBAL=/dev/null \
+  GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 \
+  /Users/sheny/.nvm/versions/node/v22.23.2/bin/node \
+  --import /tmp/gitrelay-ref-preserve.uqMhXX3k/no-delete.mjs \
+  --disable-warning=ExperimentalWarning --experimental-strip-types \
+  /tmp/gitrelay-ref-preserve.uqMhXX3k/probe.mjs
+```
+
+## Daemon cache recovery tradeoff (2026-10-27, Asia/Singapore)
+
+A private source copy replaced the consumer's fresh-daemon cache branch with
+a full `synchronizeRef` on every consume. Six alternating runs per variant used
+one isolated real Git repository, one registered session, a matching synthetic
+daemon heartbeat, zero, 500 or 2,000 retained message events with no
+recipients, and warm local filesystem caches. Each timing used a separate copy
+of the state; setup and module imports were excluded.
+
+| Retained events | Existing median | Always-sync median | Approximate reciprocal throughput |
+| --- | ---: | ---: | ---: |
+| 0 | 15.213 ms | 29.779 ms | 65.7 → 33.6 calls/s |
+| 500 | 26.508 ms | 40.062 ms | 37.7 → 25.0 calls/s |
+| 2,000 | 62.845 ms | 106.291 ms | 15.9 → 9.4 calls/s |
+
+Median Node process user CPU for the three sizes was 1.618/15.116/44.210 ms
+before and 2.671/26.148/81.671 ms after; system CPU was
+1.777/21.057/103.770 ms before and 2.552/44.478/195.128 ms after. These
+figures omit Git child-process CPU, and threadpool CPU can exceed elapsed time.
+The reciprocal is calculated from median single-call latency, not measured
+concurrent throughput. The small warm-cache sample does not establish tail
+latency, cold-cache I/O, lock contention, realistic event distributions or
+real-client performance.
+
+Always synchronizing also makes message consumption depend on a current
+successful Git ref query even when a prior daemon hint is fresh; temporary Git
+unavailability can therefore delay otherwise unrelated agent messages. That
+private copy was not merged; the later consumer change uses the same approach.
+Tests retained state and intercepted only Node
+`fs.promises.rm` and `unlink`; locks and temporary files remain, and Git's own
+filesystem operations were not intercepted. No real daemon, GC or client ran.
+Evidence: `/tmp/gitrelay-cache-compare.9P3gxJwW/bench.mjs` and
+`/tmp/gitrelay-cache-compare.9P3gxJwW/README.md`. See
+[acceptance](acceptance.md#daemon-cache-and-a-pending-publication-after-ref-rollback-2026-10-27-asiasingapore)
+for the recovery scenario.
+
+## Watch stderr queue (2026-10-27, Asia/Singapore)
+
+On macOS with Node `22.23.2`, an isolated real Git repository and synthetic Git
+wrapper produced a 2,000,000-byte error every 50 ms while `status --watch` ran
+for approximately three seconds with stderr unread. Instrumenting Node's
+`stderr.writableLength` observed a maximum queue of 72,000,036 bytes before the
+change and 65,920 bytes with bounded diagnostics and backpressure handling. Both
+processes exited 0 on SIGTERM. Evidence is retained at
+`$TMPDIR/gitrelay-watch-queue-mm090zir/`.
+
+This is a synthetic local queue measurement, not a reliable RSS, CPU, disk I/O,
+startup or real-client latency benchmark. The candidate intentionally drops
+subsequent diagnostics while the pipe is blocked, including broadcast warnings;
+the measurement does not establish behavior for synchronous blocked terminals
+or other operating systems.
+
+## Always-synchronize consumer measurement (2026-10-27, Asia/Singapore)
+
+Four alternating warm-local runs per variant compared the current consumer
+change with the preceding daemon-hint fast path on one real Git repository,
+one registered session, a synthetic matching daemon heartbeat and separate
+copies of the same state. Setup and module loading were excluded. With zero
+and 500 retained message events without recipients, the old median was
+18.655 and 30.455 ms; always synchronizing measured 34.506 and 46.758 ms.
+Median Node user/system CPU was 1.808/2.228 and 10.370/25.346 ms before,
+and 2.829/3.077 and 28.546/58.224 ms after. Git child CPU is excluded;
+threadpool CPU can exceed elapsed time. This is a small sequential warm-cache
+sample, not concurrent throughput, lock contention, cold-cache I/O, Windows
+or end-to-end agent latency. It establishes a cost in this workload, not a
+general performance percentage. The daemon continues monitoring independently,
+so active clients may duplicate its Git and event scans.
+
+The separate lock-held inbox-snapshot experiment measured 35.117/50.478 ms
+for zero/500 events and was not merged; an injected boundary interleaving alone
+did not establish an invalid delivery. All fixture states were retained and
+Node deletion was intercepted; Git's own filesystem operations were not. No
+real daemon, GC, installer or coding-agent client ran. Source, harness and
+fixtures: `/var/folders/1b/b19xbzjx7xqc4kl0k9x_y4y80000gp/T/gitrelay-lock-snapshot-vsf_us8t/`.
+
+## Four-at-a-time trash recovery scans (2026-10-27, Asia/Singapore)
+
+The publication recovery scan now reads at most four trash entries at once and
+waits for the whole batch before leaving the publication lock. In an isolated
+real-Git repository, 12 alternating unchanged-ref calls per variant scanned
+synthetic small message records, with no events, sessions or daemon. Warm-cache
+median synchronization times for 0, 10, 100 and 1,000 trash records were
+11.68/12.90/18.17/69.94 ms serial and 11.79/12.55/15.40/40.72 ms in four-entry
+batches. For 1,000 records, Node user/system CPU medians were 24.12/37.19 ms and
+18.98/48.56 ms; Git child CPU is excluded. Each call checked the resulting
+commit. Results and the two source snapshots are retained at
+`/tmp/gitrelay-trash-batch.flVjiFwY/results-final.json`. This small sequential
+warm-cache test does not characterize real trash distributions, physical disk
+I/O, concurrent consumers, cold or network filesystems, Windows or agent latency.
+
+For a separate near-limit memory probe, four valid 1,742,272-byte trash files
+were read in three alternating fresh processes per variant. Whole-process peak
+RSS was 108,784/118,912/111,056 KiB serial and 119,200/120,320/118,960 KiB
+with batches; the process RSS before synchronization was approximately
+84–86 MiB. Setup was excluded and caches were warm. The samples do not
+establish a stable memory difference or worst case: parsing, buffers and event
+objects can coexist, and four 2 MiB records can consume substantially more
+than their file sizes. The batch starts only after the event scan has settled.
+
+## Pi non-repository startup retries (2026-10-27, Asia/Singapore)
+
+A waiting pi watcher performs one Git lookup per five-second interval, about
+12 child processes per minute per non-repository session. On this macOS host
+with Node 22.23.2, an isolated empty directory and warm caches, one warm-up
+and 15 direct `git rev-parse --show-toplevel` calls had a median wall time of
+8.23 ms (range 6.94–12.57 ms). This small single-process sample excludes pi,
+CPU, memory, cold caches, concurrent sessions and other operating systems; it
+is not an end-to-end latency claim. Evidence: `/tmp/gitrelay-pi-nongit-perf.uKWSp07Z/`.

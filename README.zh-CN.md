@@ -2,11 +2,11 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-面向 Git 分支与工作树的多 coding agent 协作工具：投递相关上游变更、共享协作消息、监控本地与 GitHub 分支状态，并支持显式开启的快进同步。pi 还提供交互式工作树管理。
+面向 Git 分支与工作树的多 coding agent 协作工具：投递相关上游变更、共享协作消息、监控本地与 GitHub 分支状态，自动分支同步暂不可用。pi 还提供交互式工作树管理。
 
 npm 包名为 `git-relay`，提供同名 CLI，并保留 `worktree-relay`、`worktree-sync` 和 pi `/worktree` 命令兼容已有配置。Git 检测核心不依赖 pi，也可由 Claude Code、Codex、Cursor、OpenCode v2 和其他宿主复用。无运行时依赖，需要 Node.js 22.19+ 和 Git。
 
-原 `worktree-relay` / `pi-git-worktree` 用户需将安装源改为新包或新目录；状态目录、`WORKTREE_SYNC_*` 环境变量和会话身份保持不变，不迁移或清空既有消息。下面示例统一使用 `git-relay`，旧命令别名仍可使用。
+原 `worktree-relay` / `pi-git-worktree` 用户需将安装源改为新包或新目录；状态根目录、`WORKTREE_SYNC_*` 环境变量和会话身份保持不变，旧消息不会被清空。旧版按路径保存的仓库状态需要明确选择迁移或从空状态开始，操作前请核对数据归属。下面示例统一使用 `git-relay`，旧命令别名仍可使用。
 
 ## 按需求选择入口
 
@@ -15,8 +15,8 @@ npm 包名为 `git-relay`，提供同名 CLI，并保留 `worktree-relay`、`wor
 | 接收相关上游 diff 和 agent 消息 | `check` / `watch`、原生适配器或 hooks | 否 |
 | 查看本地与 GitHub 实时分支状态 | `status --github` | 否 |
 | 持续观察状态变化 | `status --github --watch` | 否 |
-| fetch 并快进更新当前检出分支 | `status --auto-sync`，可加 `--watch` | 是，需显式开启 |
-| 在 pi 中管理工作树 | `/worktree` | 显式创建或删除 |
+| 自动分支同步 | 暂不可用；`--auto-sync` 返回 blocked | 否 |
+| 在 pi 中管理工作树 | `/worktree` | 显式创建；自动移除暂不可用 |
 | 出现在 Codex 插件列表 | 构建、注册并安装 Codex 插件 | 安装不会开启同步 |
 
 `watch` 接收消息事件，`status --watch` 观察分支状态快照，两者用途不同。改名兼容、旧插件迁移和更新步骤见 [迁移指南](docs/migration.md)。
@@ -32,7 +32,7 @@ A 合入 main
   → B/C 分别记录回执，互不消费对方的消息
 ```
 
-相关变更直接投递到 agent 会话；接收通知本身不修改代码。自动同步默认关闭，仅在显式开启后 fetch 并尝试快进更新。默认无需常驻进程，也可启用可选 daemon 集中监控与清理；各平台共用用户级消息层，既能分享上游变更，也能主动发布跨 agent 协调消息。
+相关变更直接投递到 agent 会话；接收通知本身不修改代码。自动同步因并发切换分支可能错更新而暂不可用。默认无需常驻进程，也可启用可选 daemon 集中监控与清理；各平台共用用户级消息层，既能分享上游变更，也能主动发布跨 agent 协调消息。
 
 首次运行建立主分支基线；之后只投递相关更新。普通 merge、fast-forward、squash、直接提交均可感知。常规 first-parent 前进逐个检查，不遗漏两次轮询之间先修改后还原的文件；旧位置不在当前 first-parent 链上时只比较前后快照，不重放已有变更。
 
@@ -40,7 +40,7 @@ A 合入 main
 
 | 平台 | 入口 | 投递时机 |
 | --- | --- | --- |
-| pi | `src/adapters/pi/` | 每 5 秒；忙时排队，空闲时自动触发 agent |
+| pi | `src/adapters/pi/` | 每 5 秒检查；忙时保留事件，空闲时自动触发 agent |
 | Claude Code | `src/adapters/claude-code/hooks.json` | lifecycle hooks 注入；Stop 可请求继续 |
 | Codex | `src/adapters/codex/hooks.json` | 支持 hooks 的版本中注入；Stop 可请求继续 |
 | Cursor | `src/adapters/cursor/hooks.json` | 工具结束后注入；completed stop 可跟进 |
@@ -50,6 +50,12 @@ A 合入 main
 **Hooks 不能唤醒已经空闲的会话。** pi/OpenCode 原生适配器才包含轮询及主动触发。各平台的接口版本、安装步骤和完整边界见 [接入指南](docs/integrations.md)。
 
 ## 安装与使用
+
+### 自动配置
+
+构建并安装 CLI 后，先运行 `git-relay install --dry-run` 查看客户端检测结果，再用 `git-relay install` 配置受支持的客户端。可重复传入 `--platform NAME` 选择平台，或使用 `--skip NAME` 跳过平台。`git-relay uninstall --platform NAME` 只处理安装器拥有的配置，配合 `--dry-run` 可预览。Codex 自动配置仅在用户级 hooks 文件不存在时安装，仍需在 `/hooks` 中单独信任。Claude 启动器可在 skills 不变且原安装时的 Node 可执行文件仍兼容时升级运行时；旧版安装及 skills 变更需手动迁移。配置冲突、未验证版本、升级限制和保留文件见 [接入指南](docs/integrations.md#automatic-setup)。
+
+即使使用 `--dry-run`，pi 检测也会运行 `pi --version`；安装 pi 适配时还会启动客户端验证。pi 自身可能读取设置或清理其托管安装的暂存目录。可使用 `--skip pi` 排除这些操作，详情见[接入指南](docs/integrations.md#automatic-setup)。
 
 ### pi
 
@@ -95,9 +101,13 @@ git-relay status --branch main --github --repo owner/repo --watch \
 
 输出 NDJSON：当前工作区分支、提交、是否有未提交/未跟踪文件，目标本地分支提交、相对本机上游引用的 ahead/behind，以及 GitHub 同名分支的实时提交和是否与本地一致。默认仓库由 `gh` 解析，支持 `--repo [HOST/]OWNER/REPO`。`--branch` 是分支名，不是完整 ref；省略时跟随当前分支，detached HEAD 必须显式指定。
 
+工作区是否有改动遵循 Git status 及其子模块忽略设置；显示干净时，被忽略的子模块内仍可能有修改。
+
 `--watch` 首次输出快照，此后只输出状态变化；默认本地每 5 秒、GitHub 每 30 秒检查（云端最短 5 秒），每轮结束后等待。加 `--session` 才会将基线之后的变化广播到现有消息层，宿主仍需接收；重启重新建立基线，不补发停机期间的状态变化。未指定 `--session` 时仅输出。
 
-云端查询失败时保留本地结果并输出 `github.error`，单次查询退出码为 1，持续监控会重试。不存在的分支提交为 `null`，不把权限/网络故障当成分支删除。ahead/behind 基于本机上游缓存，可能过时；云端不同提交只表示不一致，不推断谁领先。默认只读；启用下述自动同步后才会 fetch 和快进更新本地分支，不合并 PR，也不替代原有的相关 diff 投递。详见 [接入指南](docs/integrations.md#local-and-github-branch-monitoring)。
+状态快照超过消息层 64 KiB 序列化上限时仍会在本地显示，但不会广播。广播失败可能已经完成，监控不会自动重试相同快照；手动重试前请检查消息状态。诊断尽力写入 stderr，输出流不可用时可能丢失。详见 [监控限制](docs/integrations.md#local-and-github-branch-monitoring)。
+
+云端查询失败时保留本地结果并输出 `github.error`，单次查询退出码为 1，持续监控会重试。不存在的分支提交为 `null`，不把权限/网络故障当成分支删除。ahead/behind 基于本机上游缓存，可能过时；云端不同提交只表示不一致，不推断谁领先。查询保持只读；自动同步暂不可用，不替代原有的相关 diff 投递。详见 [接入指南](docs/integrations.md#local-and-github-branch-monitoring)。
 
 ### 安装到 Codex 插件列表
 
@@ -119,31 +129,21 @@ codex plugin list --marketplace git-relay-local --json
 
 ### Codex App
 
-本项目附带 `.codex/environments/environment.toml`，预置「Branch status」「Monitor branches (read-only)」「Auto-sync (fast-forward)」三个本地操作，命令在 App 集成终端运行。状态操作还会刷新 `.codex/git-relay-status.md`，可在 App 文件面板打开。自动同步操作只有被主动运行时才开启；停止对应终端进程即停止，启动只读监控不会关闭另一个仍在运行的同步进程。
+本项目附带 `.codex/environments/environment.toml`，预置「Branch status」「Monitor branches (read-only)」「Auto-sync (fast-forward)」三个本地操作，命令在 App 集成终端运行。状态操作还会刷新 `.codex/git-relay-status.md`，可在 App 文件面板打开。自动同步操作目前返回 blocked；升级不会停止已运行的旧版本同步进程，需停止对应终端，启动只读监控不会关闭它。
 
-Codex hook 模板已启用 `--branch-status`：SessionStart/UserPromptSubmit 提供本地状态与 UI `systemMessage`，收到协作消息也显示摘要。hooks 不访问 GitHub、不启动后台监控、不自动同步；云端查询与同步使用上述显式操作。插件内 hooks 使用安装包的 CLI，无需全局安装；重开聊天后用 `/hooks` 确认发现和信任状态。
+Codex hook 模板已启用 `--branch-status`：SessionStart/UserPromptSubmit 提供本地状态与 UI `systemMessage`，收到协作消息也显示摘要。hooks 不访问 GitHub、不启动后台监控、不自动同步；云端查询使用上述显式操作；自动同步暂不可用。插件内 hooks 使用安装包的 CLI，无需全局安装；重开聊天后用 `/hooks` 确认发现和信任状态。
 
 状态页是单次查询快照；实时变化看「Monitor branches (read-only)」终端。App 对配置的发现、信任与 UI 呈现需在当前版本确认，生成配置不代表已加载。
 
-### 自动同步开关（默认关闭）
+### 自动分支同步暂不可用
 
-```sh
-# 先为当前分支配置好远端 upstream，再开启自动 fetch + 快进更新。
-git-relay status --github --watch --auto-sync
+并发切换分支可能使旧版同步更新错误分支。`status --auto-sync` 现返回 `sync.state: "blocked"`，不会 fetch 或更改工作树；单次执行退出码为 1，`--watch` 继续只读监控，`--no-auto-sync` 保持可用。升级不会停止已运行的旧版同步进程，请在各自终端停止；启动新的只读监控或停止 daemon 不能停止旧进程。
 
-# 关闭：重启监控时省略 --auto-sync，或显式指定。
-git-relay status --github --watch --no-auto-sync
-```
-
-单次 `status --auto-sync` 也可执行一次同步。仅更新 `--cwd` 中当前检出的目标分支，默认目标固定为启动时的分支；不会切换分支或修改其他 worktree。来源始终是 Git 配置的远端 upstream，可与本地分支不同名；`--repo` 不可与自动同步同时使用。GitHub 查询只是附加观察，不决定同步来源。Git fetch 使用 Git 自身的认证配置，必要时先运行 `gh auth setup-git`。
-
-每轮先刷新该 upstream 的远端跟踪引用，再仅以 fast-forward 更新干净的本地分支。未提交/未跟踪修改、分支分叉、正在进行的 merge/rebase 等会阻止更新；被忽略文件也不会被覆盖。不 stash、reset、rebase、push 或创建 merge commit。本地领先时保留本地提交。输出 `sync.state` 为 `updated`、`up-to-date`、`ahead`、`blocked` 或 `error`，附带 remote/reason；单次阻止或失败退出码为 1，持续监控后续重试。网络模式默认间隔 30 秒，最短 5 秒。
-
-开关仅对当前命令生效，不持久保存。开启后会实际修改本地文件，请勿同时在同一 worktree 手动切换分支或运行其他 Git 写操作；关闭正在运行的监控后，再以关闭开关的命令启动。
+手动替代方案及并发限制见[迁移说明](docs/migration.md#monitoring-and-automatic-synchronization)：先停止该工作树中的并发 Git 操作、确认分支和上游，再由用户决定是否 fetch 和快进合并。手动 Git 也有并发竞态，不能将其视为自动恢复保证。
 
 ### 跨 coding agent 共享消息
 
-默认状态目录：`~/.local/state/worktree-agent-sync/repos/<repo-id>/`，支持 `XDG_STATE_HOME` 和绝对路径覆盖 `WORKTREE_SYNC_STATE_DIR`。同一仓库的 worktree 共享事件，不同 clone 按 Git common directory 的真实路径隔离。
+默认状态目录：`~/.local/state/worktree-agent-sync/repos/<repo-id>/`，支持 `XDG_STATE_HOME` 和绝对路径覆盖 `WORKTREE_SYNC_STATE_DIR`。同一仓库的 worktree 共享事件；仓库身份由 Git common directory 的规范路径和持久标识共同决定。只读 common directory 可配置外部标识。旧版按路径保存的状态需要明确选择迁移或从空状态开始，详见[迁移说明](docs/migration.md#repository-identity-and-existing-state)。
 
 ```sh
 # 接收方先通过原生插件/hooks 或 check 登记会话。
@@ -184,13 +184,13 @@ git-relay daemon status
 | `/worktree` | 操作菜单 |
 | `/worktree list` | 路径、分支、提交和状态 |
 | `/worktree add` | 新建分支或使用已有本地分支，可指定新分支起点 |
-| `/worktree remove` | 二次确认后删除工作区，保留分支 |
+| `/worktree remove` | 查看所选工作树并获取手动移除说明；自动移除暂不可用 |
 | `/worktree leave` | 显式停止当前会话订阅，保留未读消息 |
 | `/worktree join` | 显式重新加入并启动接收器 |
 
 路径在对话框填写，支持空格、中文和绝对路径；相对路径以当前 pi 目录为基准，不展开 `~` 或环境变量。创建后在新目录另启 agent，不改变当前 pi 会话目录。起点存在同名分支和标签时拒绝猜测，请使用 `refs/heads/...` 或 `refs/tags/...` 完整引用。
 
-删除不使用 `--force`，拒绝删除主工作区、锁定工作区及当前 pi 所在 worktree（含子目录/符号链接入口）。修改、暂存或未跟踪文件由 Git 阻止删除；**被 Git 忽略的文件仍可能被一起删除，请自行备份**。其他 agent 进程所在目录不在此删除保护范围内。
+自动移除暂时停用：Git 无法原子地将删除绑定到所选工作树；并发 Git 操作可能在同一路径替换工作树，使原删除操作误删替代目录。导出的 `removeWorktree` API 也会拒绝删除。如需手动操作，请先停止所有可能在该仓库添加、移动或删除工作树的进程，用 `git worktree list --porcelain` 核对目标与身份，**备份被 Git 忽略的文件**，再手动运行 `git worktree remove --`，将已核实路径作为按当前 shell 正确引用的单独参数，不使用 `--force`。pi 显示的 JSON 路径是数据而非 shell 引号，不能直接粘贴为参数。Git 本身没有原子身份校验；若仍有并发操作，相同竞态仍可能发生。详见[迁移说明](docs/migration.md#temporary-worktree-removal-change)。
 
 ## 项目结构
 
@@ -199,7 +199,7 @@ src/
 ├── core/
 │   ├── git.ts             # Git/worktree 操作
 │   ├── branch-status.ts   # 本地/上游状态与可选 GitHub CLI 查询
-│   ├── branch-sync.ts     # 显式 fetch 与受保护的快进同步
+│   ├── branch-sync.ts     # 自动同步暂时阻止
 │   ├── status-format.ts   # Markdown 状态快照
 │   ├── changes.ts         # 文件交集、提交范围、diff、事件格式
 │   ├── store.ts           # 用户状态目录、仓库身份、原子写入和锁
@@ -248,6 +248,6 @@ npm run benchmark
 
 性能基准使用 3 个会话、100/1,000/10,000 个保留广播事件，对比有无 daemon 的空轮询与 32 条离线消息恢复；不读取用户消息、不调用模型。结果和限制见 [性能记录](docs/performance.md)。
 
-测试使用临时仓库和隔离状态目录，覆盖多 worktree 合并、文件交集、路径规范化、first-parent 非连续历史、改后还原、重命名、大 diff、历史改写、跨 agent 广播、独立回执、旧状态迁移、并发重试、pi 排队去重、OpenCode v2 持久队列与取消、各 hook 协议及独立 CLI 进程间通信。已在本机 pi `1.4.0`、Codex CLI `0.164.0`、Claude Code `2.1.310`、OpenCode `2.1.2` 验证真实模型收件与去重，详见 [验收记录](docs/acceptance.md)。这不代表其他版本或 Cursor 已通过真实验收。
+测试使用临时仓库和隔离状态目录，覆盖多 worktree 合并、文件交集、路径规范化、first-parent 非连续历史、改后还原、重命名、大 diff、历史改写、跨 agent 广播、独立回执、旧状态迁移、并发重试、pi 排队去重、OpenCode v2 持久队列与取消、各 hook 协议及独立 CLI 进程间通信。已在本机记录的源码快照上，以 pi `1.4.0`、Codex CLI `0.164.0`、Claude Code `2.1.310`、OpenCode `2.1.2` 验证真实模型收件与去重。之后在较早的源码快照上完成了有限的 pi 真实模型消息使用及重启检查；当前源码的完整验收仍未完成。测试版本与范围详见 [验收记录](docs/acceptance.md)。这不代表其他版本或 Cursor 已通过真实验收。
 
-提供文件级变更感知和可选快进同步，不提供语义冲突检测。无事件不代表没有跨文件影响；事件送达也不代表 agent 已完成适配。正常运行去重，崩溃边界允许重发；CLI/hooks 输出成功后确认投递，宿主是否实际接收需要宿主确认。只清理所有接收者已确认、超过保留期的事件；未读消息和关闭标记保留。daemon 不会突破宿主的空闲唤醒限制。更多限制与恢复步骤见 [接入指南](docs/integrations.md#state-recovery-and-limitations)。
+提供文件级变更感知，不提供语义冲突检测；自动同步暂不可用。无事件不代表没有跨文件影响；事件送达也不代表 agent 已完成适配。正常运行去重，崩溃边界允许重发；CLI/hooks 输出成功后确认投递，宿主是否实际接收需要宿主确认。只清理所有接收者已确认、超过保留期的事件；未读消息和关闭标记保留。daemon 不会突破宿主的空闲唤醒限制。更多限制与恢复步骤见 [接入指南](docs/integrations.md#state-recovery-and-limitations)。
