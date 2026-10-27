@@ -10,7 +10,7 @@ import {
   validateIdentity,
 } from "../core/mailbox.ts";
 import { runHook } from "../adapters/hooks.ts";
-import { joinSession, leaveSession } from "../core/sessions.ts";
+import { joinSession, leaveSession, leaveSessionIfRepository, preflightLeaveSession } from "../core/sessions.ts";
 import { sessionActivation } from "../core/activation.ts";
 import { collectGarbage } from "../core/cleanup.ts";
 import { runDaemon } from "../core/daemon.ts";
@@ -400,8 +400,15 @@ async function main() {
       signal: abort.signal,
       repositoryId: values["repository-id"],
     };
-    if (command === "leave") await sessionActivation(options, false);
-    const session = command === "join" ? await joinSession(options) : await leaveSession(options);
+    const checked = command === "leave" ? await preflightLeaveSession(options) : {};
+    if (command === "leave") await sessionActivation(options, false, checked);
+    let session;
+    if (command === "join") session = await joinSession(options);
+    else if (options.repositoryId !== undefined) session = await leaveSession(options);
+    else {
+      session = await leaveSessionIfRepository(options, checked);
+      if (!checked.root && !session) throw new Error("Worktree is unavailable; select --repository-id if needed.");
+    }
     if (command === "join") await sessionActivation(options, true);
     await output({ session, left: command === "leave" && session !== undefined });
     return;

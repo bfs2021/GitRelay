@@ -3,10 +3,11 @@ import { spawnSync } from "node:child_process";
 import { access, chmod, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { hookResponse, runHook } from "../../src/adapters/hooks.ts";
 import { sessionActivation } from "../../src/core/activation.ts";
 import { consumeMailbox } from "../../src/core/consumer.ts";
-import { leaveSessionIfRepository, preflightLeaveSession } from "../../src/core/sessions.ts";
+import { joinSession, leaveSessionIfRepository, preflightLeaveSession } from "../../src/core/sessions.ts";
 import { listSessions, readReceipt, readSession, sendMessage, sessionKey } from "../../src/core/mailbox.ts";
 import { chooseFreshRepository, hash, repository, withLock } from "../../src/core/store.ts";
 import { setTimeout as delay } from "node:timers/promises";
@@ -18,6 +19,173 @@ const input = (cwd: string, session = "receiver") => ({
   session_id: session,
   cwd,
 });
+
+test("legacy subdirectory activation closes its inbox when disabled at the root", async (t) => {
+  const f = await fixture(t),
+    sub = join(f.b, "sub"),
+    options = { cwd: sub, ref, adapter: "codex", session: "receiver" };
+  await mkdir(sub);
+  const directory = join(f.root, "state", "activations");
+  await mkdir(directory, { recursive: true });
+  const oldKey = sessionKey({ root: sub }, options, ref);
+  await writeFile(join(directory, `${oldKey}.json`), JSON.stringify({ key: oldKey, enabled: true }));
+  await joinSession(options);
+  const event = await sendMessage({ cwd: f.a, adapter: "cli", session: "sender", text: "unread" });
+  await runHook({ ...input(f.b), prompt: "Disable GitRelay" }, ref, async () => {});
+  const repo = await repository(f.b),
+    key = sessionKey(repo, options, ref);
+  assert.ok((await listSessions(f.b))[0].closedAt);
+  assert.equal(await readReceipt(repo, key, event.id), undefined);
+});
+
+test("failed nested repository disable cannot disable its parent activation", async (t) => {
+  const f = await fixture(t),
+    nested = join(f.b, "nested");
+  await mkdir(nested);
+  git(nested, "init", "-b", "main");
+  git(nested, "commit", "--allow-empty", "-m", "init");
+  const output = async (_value: object) => {};
+  await runHook({ ...input(f.b), prompt: "Enable GitRelay" }, ref, output);
+  await runHook({ ...input(nested), prompt: "Enable GitRelay" }, ref, output);
+  await rename(join(nested, ".git"), join(nested, ".git-saved"));
+  await assert.rejects(runHook({ ...input(nested), prompt: "Disable GitRelay" }, ref, output), /restore.*repository/i);
+  assert.equal(await sessionActivation({ cwd: f.b, ref, adapter: "codex", session: "receiver" }), true);
+});
+
+test("invalid explicit CLI repository selection does not disable an existing worktree", async (t) => {
+  const f = await fixture(t);
+  await runHook({ ...input(f.b), prompt: "Enable GitRelay" }, ref, async () => {});
+  const cli = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--experimental-strip-types",
+      cli,
+      "leave",
+      "--cwd",
+      f.b,
+      "--agent",
+      "codex",
+      "--session",
+      "receiver",
+      "--repository-id",
+      "d".repeat(64),
+    ],
+    { encoding: "utf8", env: process.env },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /only for a missing worktree/);
+  assert.equal(await sessionActivation({ cwd: f.b, ref, adapter: "codex", session: "receiver" }), true);
+});
+
+test(
+  "disable does not close a replacement repository after activation preflight",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const f = await fixture(t);
+    const hooksUrl = new URL("../../src/adapters/hooks.ts", import.meta.url).href;
+    const sessionsUrl = new URL("../../src/core/sessions.ts", import.meta.url).href;
+    const mailboxUrl = new URL("../../src/core/mailbox.ts", import.meta.url).href;
+    const prepare = `const { joinSession } = await import(${JSON.stringify(sessionsUrl)}); await joinSession({ cwd: process.argv[1], ref: 'refs/heads/main', adapter: 'codex', session: 'receiver' });`;
+    const script = `
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import { execFileSync } from 'node:child_process';
+    import { syncBuiltinESMExports } from 'node:module';
+    const root = process.argv[1], activation = process.argv[2], old = root + '-old';
+    const { runHook } = await import(${JSON.stringify(hooksUrl)});
+    const { listSessions } = await import(${JSON.stringify(mailboxUrl)});
+    const input = { hook_event_name: 'UserPromptSubmit', session_id: 'receiver', cwd: root };
+    await runHook({ ...input, prompt: 'Enable GitRelay' }, 'refs/heads/main', async () => {});
+    const original = fs.renameSync;
+    let swapped = false;
+    fs.renameSync = (from, to) => {
+      if (!swapped && typeof to === 'string' && to.startsWith(activation) && to.endsWith('.json')) {
+        swapped = true;
+        original(root, old);
+        fs.mkdirSync(root);
+        execFileSync('git', ['init', '-q', '-b', 'main', root]);
+        execFileSync('git', ['-C', root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-q', '--allow-empty', '-m', 'init']);
+        execFileSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', ${JSON.stringify(prepare)}, root], { env: process.env });
+      }
+      return original(from, to);
+    };
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(runHook({ ...input, prompt: 'Disable GitRelay' }, 'refs/heads/main', async () => {}), /identity changed|subscription changed/i);
+    } finally {
+      fs.renameSync = original;
+      syncBuiltinESMExports();
+    }
+    assert.equal(swapped, true);
+    assert.equal((await listSessions(root))[0].closedAt, undefined);
+  `;
+    const result = spawnSync(
+      process.execPath,
+      ["--experimental-strip-types", "--input-type=module", "-e", script, f.b, join(f.root, "state", "activations")],
+      { encoding: "utf8", env: process.env, timeout: 20000 },
+    );
+    assert.equal(result.status, 0, result.stderr);
+  },
+);
+
+test(
+  "worktree activation, disable retry and POSIX message capability remain compatible",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const f = await fixture(t),
+      sub = join(f.b, "sub"),
+      responses: object[] = [],
+      output = async (value: object) => {
+        responses.push(value);
+      };
+    await mkdir(sub);
+    await writeFile(join(f.b, "\\notes"), "local");
+    await writeFile(join(f.b, "\\later"), "local");
+    await runHook({ ...input(f.b), prompt: "Enable GitRelay" }, ref, output);
+    const repo = await repository(f.b),
+      key = sessionKey(repo, { adapter: "codex", session: "receiver" }, ref);
+    assert.equal((await listSessions(f.b))[0].posixPaths, true);
+    const first = await sendMessage({ cwd: f.a, adapter: "cli", session: "sender", text: "first", files: ["\\notes"] });
+    assert.equal(first.pathFormat, "posix-v1");
+    await runHook({ ...input(sub), hook_event_name: "PostToolUse" }, ref, output);
+    assert.equal((await readReceipt(repo, key, first.id))?.status, "delivered");
+    const second = await sendMessage({
+      cwd: f.a,
+      adapter: "cli",
+      session: "sender",
+      text: "unread",
+      files: ["\\later"],
+    });
+    const held = Promise.withResolvers<void>(),
+      release = Promise.withResolvers<void>();
+    const locked = withLock(join(repo.directory, "sessions", `${key}.lock`), async () => {
+      held.resolve();
+      await release.promise;
+    });
+    await held.promise;
+    try {
+      await assert.rejects(runHook({ ...input(sub), prompt: "Disable GitRelay" }, ref, output), /busy/);
+    } finally {
+      release.resolve();
+      await locked;
+    }
+    await runHook({ ...input(f.b), prompt: "Disable GitRelay" }, ref, output);
+    assert.ok((await listSessions(f.b))[0].closedAt);
+    assert.equal(await readReceipt(repo, key, second.id), undefined);
+    const closed = await sendMessage({
+      cwd: f.a,
+      adapter: "cli",
+      session: "sender",
+      text: "closed",
+      files: ["\\closed"],
+    });
+    assert.ok(!closed.recipients.includes(key));
+    await runHook({ ...input(sub), prompt: "Enable GitRelay" }, ref, output);
+    assert.equal((await readReceipt(repo, key, second.id))?.status, "delivered");
+    assert.equal((await listSessions(f.b))[0].posixPaths, true);
+  },
+);
 
 test("Codex protocol returns model context and Stop continuation", () => {
   assert.deepEqual(hookResponse("PostToolUse", "diff"), {
@@ -50,6 +218,39 @@ test("ordinary hooks skip Git, status and subscriptions until the native session
   await assert.rejects(access(join(f.root, "state")), { code: "ENOENT" });
 });
 
+test("an unrelated session in a subdirectory stays off without Git even when the worktree is enabled", async (t) => {
+  const f = await fixture(t),
+    sub = join(f.b, "pkg"),
+    previousPath = process.env.PATH;
+  await mkdir(sub);
+  await sessionActivation({ cwd: f.b, ref, adapter: "codex", session: "enabled" }, true);
+  process.env.PATH = join(f.root, "missing-bin");
+  t.after(() => {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  });
+  await runHook({ ...input(sub, "other"), hook_event_name: "PostToolUse" }, ref, async (value) => {
+    assert.deepEqual(value, {});
+  });
+});
+
+test("an unenabled nested repository stays off without Git for the same session", async (t) => {
+  const f = await fixture(t),
+    nested = join(f.b, "nested"),
+    previousPath = process.env.PATH;
+  await mkdir(nested);
+  git(nested, "init");
+  await sessionActivation({ cwd: f.b, ref, adapter: "codex", session: "receiver" }, true);
+  process.env.PATH = join(f.root, "missing-bin");
+  t.after(() => {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  });
+  await runHook({ ...input(nested), hook_event_name: "PostToolUse" }, ref, async (value) => {
+    assert.deepEqual(value, {});
+  });
+});
+
 test("a direct prompt enables only its session and later hooks deliver shared messages once", async (t) => {
   const f = await fixture(t),
     responses: object[] = [],
@@ -70,6 +271,28 @@ test("a direct prompt enables only its session and later hooks deliver shared me
     (await listSessions(f.b)).map((session) => session.session),
     ["receiver"],
   );
+});
+
+test("hooks deliver across root and nested directories in either activation direction", async (t) => {
+  const f = await fixture(t),
+    sub = join(f.b, "pkg"),
+    responses: object[] = [],
+    output = async (value: object) => {
+      responses.push(value);
+    };
+  await mkdir(sub);
+  const repo = await repository(f.b);
+  for (const [activation, delivery, session] of [
+    [f.b, sub, "root-first"],
+    [sub, f.b, "sub-first"],
+  ]) {
+    await runHook({ ...input(activation, session), prompt: "Enable GitRelay" }, ref, output);
+    const event = await sendMessage({ cwd: f.a, adapter: "cli", session: "sender", text: session });
+    await runHook({ ...input(delivery, session), hook_event_name: "PostToolUse" }, ref, output);
+    assert.match(JSON.stringify(responses.at(-1)), new RegExp(session));
+    const key = sessionKey(repo, { adapter: "codex", session }, ref);
+    assert.equal((await readReceipt(repo, key, event.id))?.status, "delivered");
+  }
 });
 
 test("disabling closes enrollment and preserves unread messages for an explicit rejoin", async (t) => {

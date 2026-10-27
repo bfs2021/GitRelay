@@ -273,7 +273,7 @@ export default {
           if (!sessions.has(id)) {
             sessions.set(id, { abort: new AbortController(), instance, rejoin: optIns.has(id) });
             optIns.delete(id);
-            await scan(id, true);
+            await scan(id, !retry);
           }
         }
       } catch (error) {
@@ -348,7 +348,7 @@ export default {
             }
             const checked = await preflightLeaveSession(oldOptions);
             if (!current()) return;
-            await sessionActivation(oldOptions, false);
+            await sessionActivation(oldOptions, false, checked);
             if (!current()) return;
             attempt.disabled = true;
             await state.active;
@@ -360,7 +360,7 @@ export default {
             const checked = await preflightLeaveSession(oldOptions);
             if (!current()) return;
             if (!attempt.disabled) {
-              await sessionActivation(oldOptions, false);
+              await sessionActivation(oldOptions, false, checked);
               if (!current()) return;
               attempt.disabled = true;
             }
@@ -404,7 +404,7 @@ export default {
             );
             return;
           }
-          await sessionActivation(options, false);
+          await sessionActivation(options, false, checked);
           if (!current()) return;
           attempt.trusted = true;
           attempt.disabled = true;

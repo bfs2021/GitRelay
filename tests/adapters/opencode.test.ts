@@ -167,6 +167,35 @@ async function harness(
   };
 }
 
+test(
+  "OpenCode activation and reopen retain POSIX message capability",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const calls: Prompt[] = [];
+    const f = await harness(t, async (input) => {
+      calls.push(input);
+    });
+    await writeFile(join(f.b, "\\notes"), "local");
+    await f.enroll();
+    assert.equal((await listSessions(f.b))[0].posixPaths, true);
+    const event = await sendMessage({
+      cwd: f.a,
+      adapter: "cli",
+      session: "sender",
+      text: "special filename",
+      files: ["\\notes"],
+    });
+    assert.equal(event.pathFormat, "posix-v1");
+    f.tick();
+    await waitFor(async () => (await readReceipt(f.repo, f.key, event.id))?.status === "delivered");
+    assert.match(calls[0].text!, /special filename/);
+    await f.enroll(f.id, undefined, "Disable GitRelay");
+    assert.ok((await listSessions(f.b))[0].closedAt);
+    await f.enroll();
+    assert.equal((await listSessions(f.b))[0].posixPaths, true);
+  },
+);
+
 test("OpenCode v2 queues durable input, wakes idle sessions and does not recursively enroll", async (t) => {
   const calls: Prompt[] = [];
   const f = await harness(t, async (input) => {
@@ -1863,6 +1892,14 @@ test("OpenCode does not close a parent subscription when a nested repository dis
     session: identity.session,
     instance: identity.instance,
   });
+  const parentActivation = {
+    cwd: f.b,
+    ref: identity.ref,
+    adapter: identity.adapter,
+    session: identity.session,
+    instance: identity.instance,
+  };
+  await sessionActivation(parentActivation, true);
   await rename(join(f.target, ".git"), join(f.target, ".git-hidden"));
   try {
     await f.enroll(f.id, undefined, "Disable GitRelay");
@@ -1870,6 +1907,7 @@ test("OpenCode does not close a parent subscription when a nested repository dis
     await rename(join(f.target, ".git-hidden"), join(f.target, ".git"));
   }
   assert.match(String(warnings[0]), /another GitRelay subscription/i);
+  assert.equal(await sessionActivation(parentActivation), true);
   assert.equal((await listSessions(f.b))[0].closedAt, undefined);
   assert.equal((await listSessions(f.target))[0].closedAt, undefined);
   await f.enroll(f.id, undefined, "Disable GitRelay");

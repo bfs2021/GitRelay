@@ -5,7 +5,7 @@ import { branchStatus } from "../core/branch-status.ts";
 import { formatBranchStatus } from "../core/status-format.ts";
 import { GitPathOutputError } from "../core/git.ts";
 import { requestedActivation, sessionActivation } from "../core/activation.ts";
-import { joinSession, leaveSession, leaveSessionIfRepository } from "../core/sessions.ts";
+import { joinSession, leaveSession, leaveSessionIfRepository, preflightLeaveSession } from "../core/sessions.ts";
 
 export type HookInput = Record<string, unknown>;
 
@@ -51,8 +51,9 @@ export async function runHook(
   const request = event === "UserPromptSubmit" ? requestedActivation(input.prompt) : undefined;
   const wasEnabled = await sessionActivation(options);
   if (request === false) {
-    await sessionActivation(options, false);
-    await leaveSessionIfRepository(options);
+    const checked = await preflightLeaveSession(options);
+    await sessionActivation(options, false, checked);
+    await leaveSessionIfRepository(options, checked);
     await output({});
     return;
   }
