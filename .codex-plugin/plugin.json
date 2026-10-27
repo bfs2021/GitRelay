@@ -1,7 +1,7 @@
 {
   "name": "git-relay",
   "version": "0.1.0",
-  "description": "Git worktree change awareness, GitHub branch monitoring, and opt-in fast-forward synchronization for coding agents.",
+  "description": "On-demand Git worktree coordination and branch monitoring for Codex and OpenCode.",
   "author": {
     "name": "shenyankm",
     "url": "https://github.com/shenyankm"
@@ -14,7 +14,7 @@
   "interface": {
     "displayName": "GitRelay",
     "shortDescription": "Branch and worktree coordination",
-    "longDescription": "Monitor local and GitHub branches, deliver relevant upstream changes between coding agents, and optionally fast-forward a clean local branch. Automatic synchronization is off by default.",
+    "longDescription": "Enable GitRelay for a requested parallel-development session, receive relevant changes and messages, and inspect branch status. Sessions default off; automatic branch synchronization is unavailable.",
     "developerName": "shenyankm",
     "category": "Developer tools",
     "capabilities": [
@@ -23,7 +23,7 @@
     ],
     "websiteURL": "https://github.com/shenyankm/GitRelay",
     "defaultPrompt": [
-      "Check my worktrees and local and GitHub branch status.",
+      "Enable GitRelay for parallel development in this session.",
       "Monitor branch changes with automatic synchronization disabled.",
       "Explain GitRelay commands and safe branch synchronization."
     ],

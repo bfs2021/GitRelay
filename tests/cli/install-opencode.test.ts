@@ -206,9 +206,9 @@ test("CLI configures selected OpenCode and supports alias-safe uninstall preview
     await writeFile(path, `#!/bin/sh\nprintf '${version}\\n'\n`);
     await chmod(path, 0o755);
   }
-  const brokenClaude = join(bin, "claude");
-  await writeFile(brokenClaude, "#!/bin/sh\nexit 3\n");
-  await chmod(brokenClaude, 0o755);
+  const brokenCodex = join(bin, "codex");
+  await writeFile(brokenCodex, "#!/bin/sh\nexit 3\n");
+  await chmod(brokenCodex, 0o755);
   const env = { ...process.env, PATH: bin, XDG_DATA_HOME: join(dir, "data"), XDG_CONFIG_HOME: join(dir, "config") };
   const cli = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
   const run = promisify(execFile);
@@ -217,10 +217,10 @@ test("CLI configures selected OpenCode and supports alias-safe uninstall preview
   assert.equal(result.results.find((item: { platform: string }) => item.platform === "opencode").status, "configured");
   const entry = join(env.XDG_CONFIG_HOME, "opencode", "plugins", "git-relay.js");
   assert.match(await readFile(entry, "utf8"), /file:/);
-  const failed = await run(process.execPath, ["--experimental-strip-types", cli, "install", "--platform", "claude-code", "--platform", "opencode"], { env }).then(() => null, (error) => error);
+  const failed = await run(process.execPath, ["--experimental-strip-types", cli, "install", "--platform", "codex", "--platform", "opencode"], { env }).then(() => null, (error) => error);
   const partial = JSON.parse(failed.stdout);
   assert.equal(partial.failed, true);
-  assert.equal(partial.results.find((item: { platform: string }) => item.platform === "claude-code").status, "unavailable");
+  assert.equal(partial.results.find((item: { platform: string }) => item.platform === "codex").status, "unavailable");
   assert.equal(partial.results.find((item: { platform: string }) => item.platform === "opencode").status, "configured");
   const openCodeState = join(result.workspace, "opencode.json");
   const savedOpenCode = await readFile(openCodeState, "utf8");
@@ -247,18 +247,7 @@ test("CLI configures selected OpenCode and supports alias-safe uninstall preview
   }
   await rm(openCodeState);
   await rename(savedRecordPath, openCodeState);
-  const claudeDirectory = join(result.workspace, "claude");
-  await symlink("missing-claude", claudeDirectory, "dir");
-  for (const args of [["uninstall", "--platform", "claude-code"], ["uninstall", "--platform", "claude-code", "--dry-run"]]) {
-    const error = await run(process.execPath, ["--experimental-strip-types", cli, ...args], { env }).then(() => null, (failure) => failure);
-    const output = JSON.parse(error.stdout);
-    assert.equal(output.failed, true);
-    assert.match(output.results.find((item: { platform: string }) => item.platform === "claude-code").reason, /Invalid Claude installation directory/);
-    assert.equal(await readlink(claudeDirectory), "missing-claude");
-    assert.equal(await readFile(openCodeState, "utf8"), savedOpenCode);
-    assert.match(await readFile(entry, "utf8"), /file:/);
-  }
-  await rm(claudeDirectory);
+
   const codexState = join(result.workspace, "codex-install.json");
   await writeFile(codexState, JSON.stringify({ pluginOwned: true }));
   const blocked = await run(process.execPath, ["--experimental-strip-types", cli, "uninstall", "--platform", "codex"], { env }).then(() => null, (error) => error);
@@ -283,51 +272,6 @@ test("CLI configures selected OpenCode and supports alias-safe uninstall preview
   await readFile(entry);
   await run(process.execPath, ["--experimental-strip-types", cli, "uninstall", "--platform", "opencode"], { env: aliasEnv });
   await assert.rejects(readFile(entry), { code: "ENOENT" });
-});
-
-test("CLI connects selected pi installation and preserves its settings on uninstall", { skip: process.platform === "win32" }, async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "git-relay-cli-pi-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const bin = join(dir, "bin"), agent = join(dir, "agent");
-  await mkdir(bin);
-  await mkdir(agent);
-  await writeFile(join(agent, "settings.json"), '{"theme":"custom"}\n');
-  const fakePi = join(bin, "pi");
-  await writeFile(fakePi, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '1.4.0\\n'; else printf '%s\\n' '{"id":"git-relay-install-check","success":true,"data":{"commands":[{"name":"worktree"},{"name":"skill:worktree-coordination"}]}}'; fi\n`);
-  await chmod(fakePi, 0o755);
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, PI_CODING_AGENT_DIR: agent, XDG_DATA_HOME: join(dir, "data"), XDG_CONFIG_HOME: join(dir, "config") };
-  const cli = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
-  const run = promisify(execFile);
-  const result = JSON.parse((await run(process.execPath, ["--experimental-strip-types", cli, "install", "--platform", "pi"], { env })).stdout);
-  assert.equal(result.results.find((item: { platform: string }) => item.platform === "pi").status, "configured");
-  const piState = join(result.workspace, "pi.json");
-  const savedPi = await readFile(piState, "utf8");
-  await writeFile(piState, JSON.stringify({ ...JSON.parse(savedPi), removed: "false" }));
-  for (const args of [["uninstall", "--platform", "pi"], ["uninstall", "--platform", "pi", "--dry-run"]]) {
-    const error = await run(process.execPath, ["--experimental-strip-types", cli, ...args], { env }).then(() => null, (failure) => failure);
-    const output = JSON.parse(error.stdout);
-    assert.equal(output.failed, true);
-    assert.match(output.results.find((item: { platform: string }) => item.platform === "pi").reason, /Invalid pi installation record/);
-    await readFile(join(agent, "extensions", "git-relay.ts"));
-  }
-  await writeFile(piState, savedPi);
-  const piTarget = join(result.workspace, "pi.saved.json"), piEntry = join(agent, "extensions", "git-relay.ts");
-  const savedPiEntry = await readFile(piEntry, "utf8");
-  await rename(piState, piTarget); await symlink("pi.saved.json", piState);
-  for (const args of [["install", "--platform", "pi"], ["install", "--platform", "pi", "--dry-run"], ["uninstall", "--platform", "pi"], ["uninstall", "--platform", "pi", "--dry-run"]]) {
-    const error = await run(process.execPath, ["--experimental-strip-types", cli, ...args], { env }).then(() => null, (failure) => failure);
-    const output = JSON.parse(error.stdout);
-    assert.equal(output.failed, true);
-    assert.match(output.results.find((item: { platform: string }) => item.platform === "pi").reason, /Invalid pi installation record/);
-    assert.equal(await readlink(piState), "pi.saved.json");
-    assert.equal(await readFile(piTarget, "utf8"), savedPi);
-    assert.equal(await readFile(piEntry, "utf8"), savedPiEntry);
-    assert.equal(await readFile(join(agent, "settings.json"), "utf8"), '{"theme":"custom"}\n');
-  }
-  await rm(piState); await rename(piTarget, piState);
-  await run(process.execPath, ["--experimental-strip-types", cli, "uninstall", "--platform", "pi"], { env });
-  assert.equal(await readFile(join(agent, "settings.json"), "utf8"), '{"theme":"custom"}\n');
-  await assert.rejects(readFile(join(agent, "extensions", "git-relay.ts")), { code: "ENOENT" });
 });
 
 test("CLI connects Codex hooks, reports trust, and preserves existing or damaged configuration", { skip: process.platform === "win32" }, async (t) => {
@@ -405,9 +349,9 @@ test("slow Codex inspection runs after other installations while results keep th
   }
   assert.equal(await finished, 0, stderr);
   const result = JSON.parse(stdout);
-  assert.deepEqual(result.results.map((item: { platform: string }) => item.platform), ["codex", "claude-code", "pi", "opencode"]);
+  assert.deepEqual(result.results.map((item: { platform: string }) => item.platform), ["codex", "opencode"]);
   assert.equal(result.results[0].status, "pending-trust");
-  assert.equal(result.results[3].status, "configured");
+  assert.equal(result.results[1].status, "configured");
 });
 
 test("interrupting a Codex installation stops without reporting a successful result", { skip: process.platform === "win32", timeout: 10000 }, async (t) => {

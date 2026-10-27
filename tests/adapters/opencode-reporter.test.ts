@@ -7,7 +7,7 @@ import { fixture } from "../helpers.ts";
 
 test("failed reporting during a background scan does not reject the timer task", { timeout: 10000 }, async (t) => {
   const f = await fixture(t);
-  let hook!: (event: { sessionID: string }) => Promise<void>;
+  let hook!: (event: { sessionID: string; prompt?: { text: string } }) => Promise<void>;
   let tick!: () => void;
   let gets = 0, reports = 0;
   const warned = Promise.withResolvers<void>();
@@ -25,7 +25,7 @@ test("failed reporting during a background scan does not reject the timer task",
   };
   const cleanup = await plugin.setup(context as unknown as Plugin.Context);
   try {
-    await hook({ sessionID: "reporter-test" });
+    await hook({ sessionID: "reporter-test", prompt: { text: "Enable GitRelay" } });
     t.mock.method(console, "warn", () => { reports++; warned.resolve(); throw new Error("reporter failure"); });
     tick();
     await warned.promise;
@@ -43,15 +43,18 @@ test("failed reporting during a background scan does not reject the timer task",
 test("failed reporting of an event-stream error does not break cleanup", { timeout: 10000 }, async (t) => {
   const f = await fixture(t);
   let reports = 0, calls = 0;
+  let hook!: (event: any) => Promise<void>;
   const warned = Promise.withResolvers<void>();
   t.mock.method(console, "warn", () => { reports++; warned.resolve(); throw new Error("reporter failure"); });
   const context = {
     location: { directory: f.b },
-    session: { async hook() { return { async dispose() {} }; } },
+    session: { async get() { return { location: { directory: f.b }, time: { created: 1 } }; }, async hook(_name: string, handler: (event: any) => Promise<void>) { hook = handler; return { async dispose() {} }; } },
     event: { async *subscribe() { calls++; throw new Error("event stream failed"); } },
   };
   const cleanup = await plugin.setup(context as unknown as Plugin.Context);
   try {
+    assert.equal(calls, 0);
+    await hook({ sessionID: "enabled", prompt: { text: "Enable GitRelay" } });
     await warned.promise;
     await delay(0);
     assert.equal(reports, 1);

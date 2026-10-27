@@ -36,7 +36,7 @@ test("explicit leave excludes future messages but keeps the old inbox for an exp
   const f = await fixture(t);
   const received: string[] = [];
   const receiver = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver(batch: Notification[]) { received.push(...batch.map((n) => n.event.id)); } };
-  const sender = { cwd: f.a, adapter: "claude-code", session: "A" };
+  const sender = { cwd: f.a, adapter: "codex", session: "A" };
   await consumeMailbox(receiver);
   const pending = await sendMessage({ ...sender, text: "before leave" });
   const left = await leaveSession(receiver);
@@ -89,7 +89,7 @@ test("lastSeen alone does not retire an offline session, and unknown leave does 
 
 test("leave cannot race an in-flight receive and never overwrites its session lock", async (t) => {
   const f = await fixture(t);
-  const receiver = { cwd: f.b, ref, adapter: "pi", session: "B", async deliver() {} };
+  const receiver = { cwd: f.b, ref, adapter: "opencode", session: "B", async deliver() {} };
   await consumeMailbox(receiver);
   const repo = await repository(f.b);
   const session = (await listSessions(f.b))[0];

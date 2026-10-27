@@ -59,9 +59,9 @@ test("status writes an App-readable Markdown snapshot and keeps JSON as the defa
   assert.equal(JSON.parse((await run("status", "--cwd", f.b)).stdout).type, "worktree.branch-status");
   await assert.rejects(run("status", "--format", "html"), /json or markdown/);
   await assert.rejects(run("status", "--watch", "--format", "markdown", "--output", path), /without --watch/);
-  await assert.rejects(run("hook", "claude-code", "--branch-status"), /requires hook codex/);
+  await assert.rejects(run("hook", "removed", "--branch-status"), /requires hook codex/);
   const call = exec(process.execPath, [cli, "hook", "codex", "--branch-status"]);
-  call.child.stdin!.end(JSON.stringify({ hook_event_name: "SessionStart", session_id: "app-test", cwd: f.b }));
+  call.child.stdin!.end(JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: "Enable GitRelay", session_id: "app-test", cwd: f.b }));
   assert.match(JSON.parse((await call).stdout).systemMessage, /feature\/b/);
 });
 

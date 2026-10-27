@@ -3,8 +3,8 @@ import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
-/** Preserve each installer’s published digest while reading verified files in bounded chunks. */
-export async function installerDigest(root: string, paths: string[], kind: "runtime" | "pi" | "claude", signal?: AbortSignal): Promise<string> {
+/** Preserve the published runtime digest while reading verified files in bounded chunks. */
+export async function installerDigest(root: string, signal?: AbortSignal): Promise<string> {
   const hash = createHash("sha256");
   const witnesses: { path: string; follow: boolean; directory: boolean; dev: bigint; ino: bigint; size: bigint; mtime: bigint; ctime: bigint }[] = [];
   const remember = (path: string, follow: boolean, info: BigIntStats) => {
@@ -13,18 +13,16 @@ export async function installerDigest(root: string, paths: string[], kind: "runt
   async function walk(relative: string, top: boolean): Promise<void> {
     signal?.throwIfAborted();
     const path = join(root, relative);
-    // Legacy runtime/Claude roots followed directory symlinks; nested links and all pi links were rejected.
-    const getInfo = top && kind !== "pi" ? stat : lstat;
+    // Installed runtime roots may be symlinks; nested links are rejected.
+    const getInfo = top ? stat : lstat;
     const info = await getInfo(path, { bigint: true });
     if (info.isFile()) {
-      if (top && kind !== "pi") throw Object.assign(new Error(`Not a directory: ${path}`), { code: "ENOTDIR" });
+      if (top) throw Object.assign(new Error(`Not a directory: ${path}`), { code: "ENOTDIR" });
       const file = await open(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0));
       try {
         const before = await file.stat({ bigint: true });
         if (!before.isFile() || before.dev !== info.dev || before.ino !== info.ino || before.size > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error(`Installer file changed while reading: ${path}`);
-        if (kind === "pi") hash.update(JSON.stringify([relative, Number(before.size)])).update("\0");
-        else if (kind === "claude") hash.update(relative).update("\0").update(String(before.size)).update("\0");
-        else hash.update(`${Buffer.byteLength(relative)}:`).update(relative).update(`${before.size}:`);
+        hash.update(`${Buffer.byteLength(relative)}:`).update(relative).update(`${before.size}:`);
         const buffer = Buffer.allocUnsafe(Number(before.size < 65_536n ? before.size + 1n : 65_536n)); let size = 0n;
         for (;;) {
           signal?.throwIfAborted();
@@ -42,7 +40,7 @@ export async function installerDigest(root: string, paths: string[], kind: "runt
     }
     if (!info.isDirectory()) throw new Error(`Unexpected installer entry: ${path}`);
     const entries = await readdir(path, { withFileTypes: true });
-    entries.sort(kind === "pi" ? (a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0 : (a, b) => a.name.localeCompare(b.name));
+    entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
       signal?.throwIfAborted();
       if (!entry.isDirectory() && !entry.isFile()) throw new Error(`Unexpected installer entry: ${join(path, entry.name)}`);
@@ -50,9 +48,9 @@ export async function installerDigest(root: string, paths: string[], kind: "runt
     }
     const after = await getInfo(path, { bigint: true });
     if (!after.isDirectory() || after.dev !== info.dev || after.ino !== info.ino || after.mtimeNs !== info.mtimeNs || after.ctimeNs !== info.ctimeNs) throw new Error(`Installer directory changed while reading: ${path}`);
-    remember(path, top && kind !== "pi", after);
+    remember(path, top, after);
   }
-  for (const path of paths) await walk(path, true);
+  await walk("", true);
   for (let offset = 0; offset < witnesses.length; offset += 32) {
     signal?.throwIfAborted();
     const results = await Promise.allSettled(witnesses.slice(offset, offset + 32).map(async ({ path, follow, directory, dev, ino, size, mtime, ctime }) => {

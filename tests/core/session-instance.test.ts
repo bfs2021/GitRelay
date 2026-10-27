@@ -8,7 +8,7 @@ import { fixture } from "../helpers.ts";
 
 test("native instances keep separate inboxes, resumes and leave state", async (t) => {
   const f = await fixture(t), ref = "refs/heads/main";
-  const first = { cwd: f.b, ref, adapter: "pi", session: "reused", instance: hash("first"), async deliver() {} };
+  const first = { cwd: f.b, ref, adapter: "opencode", session: "reused", instance: hash("first"), async deliver() {} };
   await consumeMailbox(first);
   const old = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "old private message" });
   const second = { ...first, instance: hash("second") };

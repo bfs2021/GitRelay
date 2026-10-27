@@ -79,7 +79,7 @@ export function validCodexRecord(value: unknown, entry: string, root: string): v
     (record.removed === undefined || typeof record.removed === "boolean") && archive(record.removing) && archive(record.archive);
 }
 
-const digest = (dir: string, signal?: AbortSignal) => installerDigest(dir, [""], "runtime", signal);
+const digest = (dir: string, signal?: AbortSignal) => installerDigest(dir, signal);
 
 export async function installCodex({ workspace, sourceRoot, env = process.env, signal, clientVersion }: Options): Promise<void> {
   if (process.platform === "win32") throw new Error("Automatic Codex hooks installation is not supported on Windows.");

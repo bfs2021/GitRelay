@@ -17,7 +17,7 @@ test("separate CLI processes share messages across coding agents", async (t) => 
   const c = ["check", "--cwd", f.c, "--agent", "opencode", "--session", "C"];
   await run(...b);
   await run(...c);
-  const sent = JSON.parse((await run("send", "--cwd", f.a, "--agent", "claude-code", "--session", "A", "--message", "Cross-process shared message")).stdout);
+  const sent = JSON.parse((await run("send", "--cwd", f.a, "--agent", "codex", "--session", "A", "--message", "Cross-process shared message")).stdout);
   assert.equal(sent.recipients, 2);
   for (const args of [b, c]) {
     const received = JSON.parse((await run(...args)).stdout);
@@ -35,7 +35,7 @@ test("CLI help, explicit cwd and hooks survive a deleted process cwd", { skip: p
     { args: ["--help"], expected: /GitRelay/ },
     { args: ["check", "--cwd", f.b, "--session", "deleted-cwd"], expected: /^$/ },
     { args: ["daemon", "status"], expected: /"running":false/ },
-    { args: ["hook", "claude-code"], expected: /^\{\}\s*$/ },
+    { args: ["hook", "codex"], expected: /^\{\}\s*$/ },
   ];
   for (const [index, { args, expected }] of cases.entries()) {
     const script = `
@@ -66,5 +66,13 @@ test("CLI emits portable JSON once, persists its cursor, and rejects invalid inv
   assert.equal((await run(...args)).stdout, "");
   await assert.rejects(run("check"), /--session ID/);
   await assert.rejects(run("hook", "unknown"), /Choose hook/);
-  assert.match((await run("--help")).stdout, /claude-code\|codex\|cursor/);
+  assert.match((await run("--help")).stdout, /hook codex/);
+});
+
+test("removed clients have no installer or hook entry point", async (t) => {
+  await fixture(t);
+  for (const platform of ["claude-code", "pi", "cursor"]) {
+    await assert.rejects(run("install", "--platform", platform), /Unknown platform/);
+    await assert.rejects(run("hook", platform), /Choose hook codex/);
+  }
 });

@@ -18,7 +18,6 @@ git-relay join  --cwd /project/worktree-B --agent codex --session native-session
 git-relay sessions --cwd /project/worktree-B
 ```
 
-pi also provides `/worktree leave` and `/worktree join`. Leaving stops its receiver before closing the subscription; a failed join/leave restores a previously enabled receiver.
 
 - `leave` saves `closedAt`, excluding the session from future broadcasts and upstream events.
 - Existing unread events, receipts, and baselines remain. **Leaving is not acknowledgement and does not make unread events eligible for cleanup.**
@@ -125,7 +124,7 @@ Upgrade and reload **all** participating CLIs, daemons, plugins, and hooks befor
 
 ### Interrupted JSON writes
 
-A process killed between writing a temporary JSON file and renaming it can leave a `<target>.json.<UUID>.tmp` file; pi proof publication can similarly leave a `<event>.<hash>.pi-proof.<UUID>.tmp` file. Normal scans and GC do not remove these files. Preserve them while investigating: an event may represent a send with an unknown outcome, and a temporary receipt or proof does not prove delivery was acknowledged. Do not promote or delete a candidate solely because it is old. Stop the relevant GitRelay operations and verify any remaining lock owner before inspecting the target and temporary files; installation journals and daemon files have separate locks. There is currently no automatic reconciliation or cleanup for these candidates.
+A process killed between writing a temporary JSON file and renaming it can leave a `<target>.json.<UUID>.tmp` file; legacy delivery-proof publication could leave a `<event>.<hash>.pi-proof.<UUID>.tmp` file. Normal scans and GC do not remove these files. Preserve them while investigating: an event may represent a send with an unknown outcome, and a temporary receipt or proof does not prove delivery was acknowledged. Do not promote or delete a candidate solely because it is old. Stop the relevant GitRelay operations and verify any remaining lock owner before inspecting the target and temporary files; installation journals and daemon files have separate locks. There is currently no automatic reconciliation or cleanup for these candidates.
 
 ## 3. Optional daemon
 

@@ -1,5 +1,26 @@
 # Migrating to GitRelay
 
+## Codex and OpenCode only; sessions default off
+
+This revision removes the native extensions, hooks, installers, benchmarks, and
+package metadata for the retired clients. Before upgrading an old installation,
+use that old version's uninstall flow or inspect and remove its owned entry in
+the retired client's settings. Stop its running sessions. This checkout does
+not edit other installed clients or delete their settings, runtime archives,
+subscriptions, receipts, or unread messages.
+
+Rebuild/reinstall Codex and OpenCode to load the new runtime. Existing automatic
+registrations do not count as consent; explicitly enable each receiving session
+with `Enable GitRelay` or `启用 GitRelay`. Normal hooks and prompts stay off.
+Activation is scoped to the worktree, ref, adapter, native conversation, and
+OpenCode instance. Refer to [on-demand sessions](integrations.md#on-demand-sessions).
+
+Old inactive subscription records can still be selected by publishers and pin
+unread data. Inspect `git-relay sessions`, then use `leave` with the exact old
+identity only when retiring that subscription is intended. Unread events remain
+preserved; removing an adapter does not authorize acknowledging or deleting them.
+Legacy delivery-proof retention guards remain for this reason.
+
 GitRelay covers branch monitoring and worktree coordination. Automatic synchronization is temporarily unavailable.
 
 | Identity | Current value | Compatibility |
@@ -8,7 +29,6 @@ GitRelay covers branch monitoring and worktree coordination. Automatic synchroni
 | GitHub repository | `shenyankm/GitRelay` | Existing repository renamed in place |
 | npm package / primary CLI | `git-relay` | CLI aliases `worktree-relay` and `worktree-sync` remain |
 | Codex plugin | `git-relay@git-relay-local` | Reinstall under the new identity |
-| pi command | `/worktree` | Unchanged |
 
 ## Update the checkout and CLI
 
@@ -42,28 +62,9 @@ After confirming the new plugin is installed, remove the old `worktree-relay` pl
 
 After changing bundled code, documentation, or skills, rebuild and repeat `codex plugin add git-relay@git-relay-local --json` to refresh the installed copy. CLI installation/enabled status and actual App rendering are separate checks. See [integration details](integrations.md#codex-app-status-and-actions).
 
-## Migrate a managed Claude Code plugin
-
-When the installer reports that an older plugin format or changed skills require manual migration, it preserves the existing installation. The following procedure creates a new managed marketplace without replacing the old one's files. It is not an in-place upgrade. It requires the old installation record and its marketplace to remain intact.
-
-1. Close Claude Code sessions that loaded the old plugin. Keep `WORKTREE_SYNC_STATE_DIR` and `XDG_STATE_HOME` unchanged. Run `git-relay uninstall --platform claude-code --dry-run` using the original environment and record the displayed workspace. Run `claude plugin list --json` and record the exact old GitRelay plugin ID. Resolve any duplicate manual hooks or other GitRelay plugins before proceeding.
-2. With the same original environment, run `git-relay uninstall --platform claude-code`. Continue only if it reports `removed`; it retains the marketplace and plugin data. Verify with `claude plugin list --json` that the old ID is no longer enabled. If removal fails or the record is missing or modified, stop and reconcile it first.
-3. Choose a new, unused **absolute directory** for the Claude installer workspace, separate from the original `XDG_DATA_HOME`, and keep this choice for future operations. For example, after verifying that this path is unused:
-
-   ```sh
-   export GITRELAY_CLAUDE_DATA_ROOT="$HOME/.local/share/git-relay-claude-migration"
-   XDG_DATA_HOME="$GITRELAY_CLAUDE_DATA_ROOT" git-relay install --platform claude-code
-   claude plugin list --json
-   ```
-
-   Confirm that the result is `configured` and exactly one intended GitRelay plugin is enabled, then start a new Claude session. If installation fails, do not re-enable both plugins. The retained marketplace can be used to restore the old plugin with `claude plugin install <old-plugin-id> --scope user --json`; this manual restoration is outside the installer's ownership record, so inspect and reconcile the state before another managed migration or uninstall.
-4. Use `XDG_DATA_HOME="$GITRELAY_CLAUDE_DATA_ROOT" git-relay install --platform claude-code` or the corresponding `uninstall` for later Claude operations. Continue managing other platforms with their original environment. An unqualified `git-relay install` in the original environment could install the old Claude entry again; use `--skip claude-code` there. Do not delete either workspace, the retained marketplace, or shared message state as part of this migration.
-
-On macOS with Claude Code `2.1.310`, an isolated test exercised a changed-skill installation and a simulated older journal/hook shape. The old and new enabled-plugin counts were 1 → 0 → 1; a previously unread message remained available to the same GitRelay session and was delivered once; unrelated settings and state were preserved. The old plugin was also restored through the native CLI during the test. This did not exercise a historical released package, a real model, or concurrent external edits.
-
 ## Repository identity and existing state
 
-The state root, `WORKTREE_SYNC_STATE_DIR`, `WORKTREE_MAIN_REF`, session IDs, event types, and `/worktree` commands remain unchanged. The repository state key now includes both the canonical Git common-directory path and a persistent identity. See [shared storage](shared-messages.md#storage-and-isolation) for the marker and the read-only configuration. Moving a checkout can still change repository or session identity; renaming the GitHub repository does not move a local checkout.
+The state root, `WORKTREE_SYNC_STATE_DIR`, `WORKTREE_MAIN_REF`, session IDs, and event types remain unchanged. The retired `/worktree` commands have been removed. The repository state key now includes both the canonical Git common-directory path and a persistent identity. See [shared storage](shared-messages.md#storage-and-isolation) for the marker and the read-only configuration. Moving a checkout can still change repository or session identity; renaming the GitHub repository does not move a local checkout.
 
 Existing path-keyed state is retained but is **not automatically associated** with the new identity. A path may have been used by multiple unrelated repositories, so inspect the old data and verify that its messages and subscriptions belong to the current repository before claiming it. The tool cannot establish that provenance. Keep a separate backup; do not delete old state to clear an error.
 
@@ -92,9 +93,9 @@ Historical acceptance paths, package names, hashes, and measurements remain in [
 
 ## Native session identity upgrade
 
-Stop and upgrade all participants before reopening shared state. Pi now binds its inbox to the canonical native history file and header creation timestamp; OpenCode binds its inbox to the data root and native creation time. A resumed history retains its instance; a newly created history gets a separate inbox even if its native ID is reused. Missing or invalid native identity metadata is rejected.
-
-Older inboxes without an `instance` remain intact and are not automatically claimed. Inspect `git-relay sessions --cwd /absolute/worktree` and preserve unread events and native histories before retiring an old registration. Manual `check`, `send`, `join`, `leave`, and `pi-inspect` targeting a bound identity require its exact `--instance`. Omitting it selects a separate legacy identity. Moving a pi history to another file or changing the OpenCode data root creates a new binding. There is no automatic transfer of old receipts or unread messages, and older processes are not fenced by a protocol version.
+OpenCode sessions bind their inbox to the data root and native creation time.
+Recreated IDs do not inherit old inboxes. Use the exact `--instance` reported by
+`sessions` for manual commands. Old unbound records remain for manual review.
 
 ## History-gap recovery
 
@@ -125,30 +126,7 @@ Later upstream notifications wait for this range; independent messages can still
      --acknowledge-history-gap --apply
    ```
 
-   Include the exact `--instance` shown by `git-relay sessions` for pi/OpenCode. This accepts every selected uninspectable upstream range for that inbox, emits `unavailable: true`, and writes receipts only after successful output. It does not recover a diff or prove the agent assessed it. Spawn errors, cancellation and timeouts remain errors; ordinary hooks and polling never opt in.
-
-## Temporary worktree removal change
-
-The pi `/worktree remove` action no longer removes a worktree automatically,
-and the exported `removeWorktree(cwd, path)` function now rejects removal after
-its non-destructive checks. Their signatures and other worktree actions remain
-available. This is a temporary compatibility change: Git's path-based removal
-does not atomically verify that a confirmed worktree has not been replaced at
-the same path. A concurrent replacement can be deleted, including Git-ignored
-files. There is no automatic migration or safe identity-conditional deletion.
-The safeguard applies only after this version is installed and loaded. Stop or
-reload older pi processes and update SDK consumers; an old extension, packaged
-runtime or SDK can still perform automatic removal.
-
-If you choose to remove a worktree manually, stop all processes that may add,
-move or remove worktrees in this repository, then inspect
-`git worktree list --porcelain`, verify the intended target and back up ignored
-files. Use `git worktree remove --` with the verified path as a separate argument
-quoted for your shell; do not use `--force`. Git's own deletion is not
-identity-conditional, so this procedure does not eliminate the race if another
-process changes worktrees concurrently. JSON-formatted paths displayed by pi are
-data, not shell quoting; do not paste them directly as arguments. Never delete an ignored file or worktree
-merely to force this operation to succeed.
+   Include the exact `--instance` shown by `git-relay sessions` for OpenCode. This accepts every selected uninspectable upstream range for that inbox, emits `unavailable: true`, and writes receipts only after successful output. It does not recover a diff or prove the agent assessed it. Spawn errors, cancellation and timeouts remain errors; ordinary hooks and polling never opt in.
 
 ## Monitoring and automatic synchronization
 

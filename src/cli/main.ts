@@ -3,8 +3,9 @@ import { parseArgs } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { consumeMailbox } from "../core/consumer.ts";
 import { formatNotifications, listSessions, messagePayloadWithinLimit, sendMessage } from "../core/mailbox.ts";
-import { runHook, type HookAgent } from "../adapters/hooks.ts";
+import { runHook } from "../adapters/hooks.ts";
 import { joinSession, leaveSession } from "../core/sessions.ts";
+import { sessionActivation } from "../core/activation.ts";
 import { collectGarbage } from "../core/cleanup.ts";
 import { runDaemon } from "../core/daemon.ts";
 import { daemonStatus } from "../core/daemon-state.ts";
@@ -17,7 +18,6 @@ import { formatBranchStatus } from "../core/status-format.ts";
 import { install } from "./install.ts";
 import { chooseFreshRepository, hash, recordRepositoryIdentity, recoverRepositoryInitialization, stateDirectory, withRepositoryIdentity } from "../core/store.ts";
 import { migrateLegacyState } from "../core/identity-migration.ts";
-import { inspectPi } from "./inspect-pi.ts";
 import { join } from "node:path";
 
 const abort = new AbortController();
@@ -85,7 +85,6 @@ async function main() {
       "repository-id": { type: "string" },
       agent: { type: "string", default: "cli" },
       message: { type: "string" },
-      event: { type: "string" },
       file: { type: "string", multiple: true },
       apply: { type: "boolean" },
       "dry-run": { type: "boolean" },
@@ -104,12 +103,11 @@ async function main() {
   const days = values["retention-days"].trim() ? Number(values["retention-days"]) : NaN;
   if (values.help || !command) {
     longRunningCommand = false;
-    await output("GitRelay (git-relay; worktree-relay and worktree-sync are compatibility aliases)\n\ngit-relay check|watch --session ID [--instance INSTANCE_ID] [--agent NAME] [--cwd PATH] [--ref refs/heads/main]\ngit-relay send --session ID --agent NAME --message TEXT [--file PATH] [--cwd PATH]\ngit-relay sessions [--cwd PATH]\ngit-relay join|leave --session ID [--agent NAME] [--cwd PATH] [--ref REF]\ngit-relay leave --session ID --cwd MISSING_PATH --repository-id STATE_ID\ngit-relay gc [--cwd PATH] [--apply|--dry-run] [--retention-days 7]\ngit-relay daemon [status] [--interval-ms 5000] [--retention-days 7]\ngit-relay hook claude-code|codex|cursor < hook-input.json\n");
+    await output("GitRelay (git-relay; worktree-relay and worktree-sync are compatibility aliases)\n\ngit-relay check|watch --session ID [--instance INSTANCE_ID] [--agent NAME] [--cwd PATH] [--ref refs/heads/main]\ngit-relay send --session ID --agent NAME --message TEXT [--file PATH] [--cwd PATH]\ngit-relay sessions [--cwd PATH]\ngit-relay join|leave --session ID [--agent NAME] [--cwd PATH] [--ref REF]\ngit-relay leave --session ID --cwd MISSING_PATH --repository-id STATE_ID\ngit-relay gc [--cwd PATH] [--apply|--dry-run] [--retention-days 7]\ngit-relay daemon [status] [--interval-ms 5000] [--retention-days 7]\ngit-relay hook codex < hook-input.json\n");
     await output("git-relay status [--branch NAME] [--github [--repo [HOST/]OWNER/REPO]] [--watch] [--auto-sync|--no-auto-sync] [--interval-ms 30000] [--session ID] [--cwd PATH]\n");
     await output("  [--format json|markdown] [--output FILE (single Markdown snapshot)]\ngit-relay hook codex [--branch-status] < hook-input.json\n");
-    await output("git-relay install|uninstall [--platform codex|claude-code|pi|opencode] [--skip PLATFORM] [--dry-run] [--allow-unverified]\n");
+    await output("git-relay install|uninstall [--platform codex|opencode] [--skip PLATFORM] [--dry-run] [--allow-unverified]\n");
     await output("git-relay identity-fresh|identity-migrate|identity-recover --cwd PATH --apply\n");
-    await output("git-relay pi-inspect --session ID [--instance INSTANCE_ID] --event EVENT_ID [--cwd PATH] [--ref REF]\n");
     await output("git-relay check --session ID [--instance INSTANCE_ID] --acknowledge-history-gap --apply\n");
     return;
   }
@@ -126,12 +124,6 @@ async function main() {
     return;
   }
   if (values.platform || values.skip || values["allow-unverified"]) throw new Error("--platform, --skip and --allow-unverified require install or uninstall.");
-  if (values.event && command !== "pi-inspect") throw new Error("--event requires pi-inspect.");
-  if (command === "pi-inspect") {
-    if (positionals.length !== 1 || !values.session || !values.event || values.apply || values["dry-run"]) throw new Error("pi-inspect requires --session and --event and is read-only.");
-    await output(await inspectPi(values.cwd ?? process.cwd(), values.ref, values.session, values.event, abort.signal, values.instance));
-    return;
-  }
   if (command === "identity-fresh" || command === "identity-migrate" || command === "identity-recover") {
     if (positionals.length !== 1 || !values.apply || values["dry-run"]) throw new Error("Identity changes require --apply; inspect the retained prior state first.");
     const cwd = values.cwd ?? process.cwd();
@@ -206,7 +198,7 @@ async function main() {
   }
   if (values.github || values.repo || values.branch || values.watch || values["auto-sync"] || values["no-auto-sync"]) throw new Error("--github, --repo, --branch, --watch and sync flags require the status command.");
   if (command === "hook") {
-    if (positionals.length !== 2 || !["claude-code", "codex", "cursor"].includes(agent)) throw new Error("Choose hook claude-code, codex or cursor.");
+    if (positionals.length !== 2 || agent !== "codex") throw new Error("Choose hook codex.");
     let data = "";
     let size = 0;
     process.stdin.setEncoding("utf8");
@@ -223,7 +215,7 @@ async function main() {
     }
     const input = JSON.parse(data);
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Hook input must be a JSON object.");
-    await runHook(agent as HookAgent, input, values.ref, output, abort.signal, values["branch-status"]);
+    await runHook(input, values.ref, output, abort.signal, values["branch-status"]);
     return;
   }
   if (command === "daemon" && agent === "status" && positionals.length === 2) { await output(await daemonStatus()); return; }
@@ -238,7 +230,9 @@ async function main() {
   if (command !== "daemon" && !values.session) throw new Error("--session ID is required for per-session delivery and deduplication.");
   if (command === "join" || command === "leave") {
     const options = { cwd: cwd(), ref: values.ref, adapter: values.agent, session: values.session!, instance: values.instance, signal: abort.signal, repositoryId: values["repository-id"] };
+    if (command === "leave") await sessionActivation(options, false);
     const session = command === "join" ? await joinSession(options) : await leaveSession(options);
+    if (command === "join") await sessionActivation(options, true);
     await output({ session, left: command === "leave" && session !== undefined });
     return;
   }

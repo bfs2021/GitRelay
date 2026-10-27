@@ -4,13 +4,11 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectPlatform, type Platform } from "./platform-detection.ts";
 import { checkWorkspace, ensureWorkspace, installOpenCode, uninstallOpenCode, validRecord } from "./install-opencode.ts";
-import { hasClaudeInstall, installClaude, uninstallClaude } from "./install-claude.ts";
 import { codexDirectory, installCodex, uninstallCodex, validCodexRecord } from "./install-codex.ts";
-import { agentDirectory, installPi, uninstallPi, validateRecord } from "./install-pi.ts";
 import { readJson } from "../core/store.ts";
 import { readInstallationRecord } from "./install-record.ts";
 
-const platforms: Platform[] = ["codex", "claude-code", "pi", "opencode"];
+const platforms: Platform[] = ["codex", "opencode"];
 
 async function canonicalDirectory(path: string): Promise<string> {
   try { return await realpath(path); }
@@ -54,20 +52,10 @@ export async function install(action: "install" | "uninstall", selected: string[
           continue;
         }
         if (dryRun) {
-          if (platform === "pi") await readInstallationRecord(join(root, "pi.json"), "pi");
           if (platform === "codex") await readInstallationRecord(join(root, "codex-hooks.json"), "Codex");
           results.push(detected); continue;
         }
-        if (platform === "claude-code") {
-          await ensureWorkspace(root);
-          const installed = await installClaude({ workspace: root, sourceRoot, signal });
-          results.push({ ...detected, status: installed.enabled ? "configured" : "installed-disabled", id: installed.id });
-          if (!installed.enabled) failed = true;
-        } else if (platform === "pi") {
-          await ensureWorkspace(root);
-          await installPi({ workspace: root, sourceRoot, signal });
-          results.push({ ...detected, status: "configured" });
-        } else if (platform === "opencode") {
+        if (platform === "opencode") {
           await installOpenCode(root, await canonicalDirectory(config), sourceDist, signal);
           results.push({ ...detected, status: "configured" });
         } else {
@@ -76,21 +64,6 @@ export async function install(action: "install" | "uninstall", selected: string[
           results.push({ ...detected, status: "pending-trust", action: "Review and trust the hooks through /hooks in Codex." });
         }
       } else {
-        if (platform === "pi") {
-          const exists = await lstat(join(root, "pi.json")).then(() => true, (error) => {
-            if (error.code === "ENOENT") return false;
-            throw error;
-          });
-          if (!exists) { results.push({ platform, status: "not-managed" }); continue; }
-          await checkWorkspace(root);
-          const record = await readInstallationRecord(join(root, "pi.json"), "pi");
-          validateRecord(record, await agentDirectory(env));
-          if (record.removed === true) { results.push({ platform, status: "not-managed" }); continue; }
-          if (dryRun) { results.push({ platform, status: "would-check-and-remove" }); continue; }
-          await uninstallPi({ workspace: root, signal });
-          results.push({ platform, status: "removed" });
-          continue;
-        }
         if (platform === "codex") {
           const legacy = await lstat(join(root, "codex-install.json")).then(() => true, (error) => {
             if (error.code === "ENOENT") return false;
@@ -109,19 +82,6 @@ export async function install(action: "install" | "uninstall", selected: string[
           if (dryRun) { results.push({ platform, status: "would-check-and-remove" }); continue; }
           const archive = await uninstallCodex({ workspace: root, signal });
           results.push({ platform, status: "removed", ...(archive ? { archive } : {}) });
-          continue;
-        }
-        if (platform === "claude-code") {
-          const exists = await hasClaudeInstall(root);
-          if (!exists) { results.push({ platform, status: "not-managed" }); continue; }
-          await checkWorkspace(root);
-          if (dryRun) { results.push({ platform, status: "would-check-and-remove" }); continue; }
-          const removed = await uninstallClaude({ workspace: root, signal });
-          results.push({ platform, status: removed.removed ? "removed" : "not-managed", retainedMarketplace: removed.retainedMarketplace });
-          continue;
-        }
-        if (platform !== "opencode") {
-          results.push({ platform, status: "not-managed" });
           continue;
         }
         const exists = await lstat(join(root, "opencode.json")).then(() => true, (error) => {

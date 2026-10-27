@@ -3,7 +3,6 @@ import { execFileSync } from "node:child_process";
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { inspectPi } from "../../src/cli/inspect-pi.ts";
 import { consumeMailbox } from "../../src/core/consumer.ts";
 import { sendMessage } from "../../src/core/mailbox.ts";
 import { repository } from "../../src/core/store.ts";
@@ -36,7 +35,7 @@ for (const suffix of ["\r", "\n", "\r\n"]) {
   });
 }
 
-test("a Git common directory ending in CR stays distinct for repository and pi inspection", { skip: process.platform === "win32" }, async (t) => {
+test("a Git common directory ending in CR stays distinct for repository discovery", { skip: process.platform === "win32" }, async (t) => {
   const f = await fixture(t), normal = join(f.root, "work-normal"), special = join(f.root, "work-special"), first = join(f.root, "common"), second = first + "\r";
   const previous = { GIT_DIR: process.env.GIT_DIR, GIT_WORK_TREE: process.env.GIT_WORK_TREE, GIT_COMMON_DIR: process.env.GIT_COMMON_DIR };
   t.after(() => { for (const [name, value] of Object.entries(previous)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; } });
@@ -48,10 +47,9 @@ test("a Git common directory ending in CR stays distinct for repository and pi i
   }
   select(normal, first); const normalRepo = await repository(normal);
   select(special, second);
-  const rec = { cwd: special, ref, adapter: "pi", session: "B", async deliver() {} };
+  const rec = { cwd: special, ref, adapter: "opencode", session: "B", async deliver() {} };
   await consumeMailbox(rec); const selected = await repository(special);
   assert.equal(selected.common, await realpath(second)); assert.notEqual(selected.id, normalRepo.id);
   const event = await sendMessage({ cwd: special, ref, adapter: "test", session: "A", text: "own message" });
-  const report = await inspectPi(special, ref, "B", event.id) as { repository: { common: string; id: string } };
-  assert.equal(report.repository.common, await realpath(second)); assert.equal(report.repository.id, selected.id);
+  assert.ok(event.recipients.length);
 });

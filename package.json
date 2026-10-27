@@ -5,13 +5,11 @@
   "license": "MIT",
   "type": "module",
   "keywords": [
-    "pi-package",
     "git",
     "worktree",
     "coding-agent"
   ],
   "files": [
-    "index.ts",
     "src",
     "vendor",
     "dist",
@@ -24,35 +22,18 @@
     ".codex-plugin",
     "assets"
   ],
-  "pi": {
-    "extensions": [
-      "./src/adapters/pi/index.ts"
-    ],
-    "skills": [
-      "./skills/worktree-coordination"
-    ]
-  },
   "bin": {
     "git-relay": "./dist/cli/main.js",
     "worktree-relay": "./dist/cli/main.js",
     "worktree-sync": "./dist/cli/main.js"
   },
-  "overrides": {
-    "@earendil-works/pi-coding-agent": {
-      "undici": "8.12.2"
-    }
-  },
   "engines": {
     "node": ">=22.19.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
     "@opencode/plugin": "^2.1.2"
   },
   "peerDependenciesMeta": {
-    "@earendil-works/pi-coding-agent": {
-      "optional": true
-    },
     "@opencode/plugin": {
       "optional": true
     }
@@ -66,7 +47,6 @@
     "test": "npm run build && node --experimental-strip-types --test tests/core/*.test.ts tests/adapters/*.test.ts tests/cli/*.test.ts"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "1.4.0",
     "@opencode/plugin": "2.1.2",
     "@types/node": "22.19.7",
     "typescript": "5.9.3"

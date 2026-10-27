@@ -5,8 +5,6 @@ import { commandOutputs } from "./command-output.ts";
 
 const clients = {
   codex: { command: "codex", verified: "0.164.0" },
-  "claude-code": { command: "claude", verified: "2.1.310" },
-  pi: { command: "pi", verified: "1.4.0" },
   opencode: { command: "opencode", verified: "2.1.2" },
 } as const;
 
@@ -89,9 +87,7 @@ export async function detectPlatform(platform: Platform, env: NodeJS.ProcessEnv 
     }
     const prerelease = versionWithoutBuild.includes("-");
     const supportedOpenCode = platform === "opencode" && major === 2 && !prerelease && (minor > 1 || (minor === 1 && patch >= 2));
-    // ctx.mode, needed to start the watcher, was introduced in pi 0.78.1.
-    const incompatiblePi = platform === "pi" && !prerelease && major === 0 && (minor < 78 || (minor === 78 && patch < 1));
-    const status = (platform === "opencode" && major < 2) || incompatiblePi ? "incompatible" : previouslyTested || supportedOpenCode ? "installed" : "unverified";
+    const status = platform === "opencode" && major < 2 ? "incompatible" : previouslyTested || supportedOpenCode ? "installed" : "unverified";
     return { platform, status, version, previouslyTested };
   } catch (error) {
     signal?.throwIfAborted();

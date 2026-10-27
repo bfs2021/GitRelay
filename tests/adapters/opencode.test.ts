@@ -12,6 +12,8 @@ import { hash, repository } from "../../src/core/store.ts";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { fixture } from "../helpers.ts";
+import { sessionActivation } from "../../src/core/activation.ts";
+import { leaveSession } from "../../src/core/sessions.ts";
 
 type Prompt = Parameters<Plugin.Context["session"]["prompt"]>[0];
 async function waitFor(check: () => Promise<boolean>) {
@@ -27,7 +29,7 @@ async function harness(t: TestContext, prompt: (input: Prompt, signal?: AbortSig
   t.after(() => finish());
   const f = await fixture(t);
   t.mock.timers.enable({ apis: ["setInterval"] });
-  let onPrompt!: (event: { sessionID: string; metadata?: Record<string, unknown> }) => Promise<void>;
+  let onPrompt!: (event: { sessionID: string; prompt?: { text: string }; metadata?: Record<string, unknown> }) => Promise<void>;
   let disposeHook = async () => {};
   let wake = Promise.withResolvers<void>();
   const events: { type: "session.deleted"; data: { sessionID: string }; handled(): void }[] = [];
@@ -59,7 +61,7 @@ async function harness(t: TestContext, prompt: (input: Prompt, signal?: AbortSig
           const stop = () => current.resolve();
           signal.addEventListener("abort", stop, { once: true });
           try { if (!signal.aborted) await current.promise; }
-          finally { signal.removeEventListener("abort", stop); }
+          finally { signal.removeEventListener("abort", stop); if (wake === current) wake = Promise.withResolvers<void>(); }
         }
       },
     },
@@ -75,7 +77,7 @@ async function harness(t: TestContext, prompt: (input: Prompt, signal?: AbortSig
     ...f, id, repo, get key() { return keyFor(); }, keyFor, locations, session: context.session,
     hookRegistered: () => Boolean(onPrompt),
     setDispose: (dispose: () => Promise<void>) => { disposeHook = dispose; },
-    enroll: (sessionID = id, metadata?: Prompt["metadata"]) => onPrompt({ sessionID, metadata }),
+    enroll: (sessionID = id, metadata?: Prompt["metadata"], text = "Enable GitRelay") => onPrompt({ sessionID, metadata, prompt: { text } }),
     tick: () => t.mock.timers.tick(5000),
     close,
     removed(sessionID = id) {
@@ -119,7 +121,7 @@ test("OpenCode v2 retries failed admission and acknowledges only durable accepta
   let attempts = 0;
   const f = await harness(t, async () => { if (++attempts === 1) throw new Error("admission failed"); });
   await f.enroll();
-  const event = await sendMessage({ cwd: f.a, adapter: "pi", session: "sender", text: "retry" });
+  const event = await sendMessage({ cwd: f.a, adapter: "codex", session: "sender", text: "retry" });
   f.tick();
   await waitFor(async () => attempts === 1 && await f.unlocked());
   assert.equal(await readReceipt(f.repo, f.key, event.id), undefined);
@@ -231,7 +233,7 @@ test("OpenCode v2 deletion aborts in-flight admission without acknowledging it",
     await new Promise<void>((_resolve, reject) => signal!.addEventListener("abort", () => reject(signal!.reason), { once: true }));
   });
   await f.enroll();
-  const event = await sendMessage({ cwd: f.a, adapter: "pi", session: "sender", text: "cancel" });
+  const event = await sendMessage({ cwd: f.a, adapter: "codex", session: "sender", text: "cancel" });
   f.tick();
   await waitFor(async () => attempts === 1);
   f.removed();
@@ -294,7 +296,7 @@ test("OpenCode rechecks a recreated session even when it reuses a deleted ID", a
   await f.enroll();
   await f.removed();
   await f.enroll();
-  const event = await sendMessage({ cwd: f.a, adapter: "pi", session: "sender", text: "recreated session" });
+  const event = await sendMessage({ cwd: f.a, adapter: "codex", session: "sender", text: "recreated session" });
   f.tick();
   await waitFor(async () => calls.some((input) => input.text?.includes(event.id)));
   assert.equal(calls.filter((input) => input.text?.includes(event.id)).length, 1);
@@ -304,7 +306,7 @@ test("OpenCode must not deliver an old inbox to a recreated session with the sam
   const calls: Prompt[] = [];
   const f = await harness(t, async (input) => { calls.push(input); });
   await f.enroll();
-  const old = await sendMessage({ cwd: f.a, adapter: "pi", session: "sender", text: "unread for the old session" });
+  const old = await sendMessage({ cwd: f.a, adapter: "codex", session: "sender", text: "unread for the old session" });
   const oldKey = f.key;
   await f.removed();
   await f.enroll(); // The host has created a different session with the same native ID.
@@ -334,7 +336,7 @@ test("OpenCode invalidates an old lookup without blocking a recreated session", 
     release.resolve();
     await oldPrompt;
     assert.equal((await listSessions(f.b)).length, 1);
-    const event = await sendMessage({ cwd: f.a, adapter: "pi", session: "sender", text: "new incarnation" });
+    const event = await sendMessage({ cwd: f.a, adapter: "codex", session: "sender", text: "new incarnation" });
     f.tick();
     await waitFor(async () => (await readReceipt(f.repo, f.key, event.id))?.status === "delivered");
     assert.equal(calls.filter((input) => input.text?.includes(event.id)).length, 1);
@@ -348,13 +350,15 @@ test("OpenCode does not retain unrelated deleted session IDs", async (t) => {
     import assert from "node:assert/strict";
     const { default: plugin } = await import(${JSON.stringify(module)});
     const start = Promise.withResolvers(), done = Promise.withResolvers();
-    const ctx = { location: { directory: ${JSON.stringify(f.b)} }, session: { hook: async () => ({ dispose: async () => {} }) }, event: { async *subscribe({ signal }) {
+    let hook;
+    const ctx = { location: { directory: ${JSON.stringify(f.b)} }, session: { get: async () => ({ location: { directory: ${JSON.stringify(f.b)} }, time: { created: 1 } }), hook: async (_name, handler) => { hook = handler; return { dispose: async () => {} }; } }, event: { async *subscribe({ signal }) {
       await start.promise;
       for (let i = 0; i < 100000; i++) yield { type: "session.deleted", data: { sessionID: 'foreign-' + i + '-' + 'x'.repeat(90) } };
       done.resolve();
       if (!signal.aborted) await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
     } } };
     const cleanup = await plugin.setup(ctx);
+    await hook({sessionID: "receiver", prompt: {text: "Enable GitRelay"}});
     global.gc(); const before = process.memoryUsage().heapUsed;
     start.resolve(); await done.promise; global.gc(); const growth = process.memoryUsage().heapUsed - before;
     await cleanup();
@@ -400,7 +404,7 @@ test("OpenCode simultaneous first prompts cannot leave a deleted session registe
 for (const ending of ["error", "end"] as const) {
   test(`OpenCode resubscribes after the event stream ${ending}`, async (t) => {
     const f = await fixture(t), release = Promise.withResolvers<void>(), observed = Promise.withResolvers<void>();
-    let onPrompt!: (event: { sessionID: string }) => Promise<void>, subscriptions = 0, lookups = 0, nativeDeleted = false;
+    let onPrompt!: (event: { sessionID: string; prompt?: { text: string } }) => Promise<void>, subscriptions = 0, lookups = 0, nativeDeleted = false;
     t.mock.method(console, "warn", () => {});
     const context = {
       location: { directory: f.b },
@@ -423,14 +427,14 @@ for (const ending of ["error", "end"] as const) {
     };
     const cleanup = await plugin.setup(context as unknown as Plugin.Context);
     try {
-      await onPrompt({ sessionID: "resubscribe" });
+      await onPrompt({ sessionID: "resubscribe", prompt: { text: "Enable GitRelay" } });
       release.resolve();
       await delay(100);
       assert.equal(subscriptions, 1, "reconnection does not spin immediately");
       await observed.promise;
       assert.equal(subscriptions, 2);
       const before = lookups;
-      await onPrompt({ sessionID: "resubscribe" });
+      await onPrompt({ sessionID: "resubscribe", prompt: { text: "Enable GitRelay" } });
       assert.equal(lookups, before + 1, "a later prompt rechecks the host after deletion");
       assert.equal((await listSessions(f.b))[0]?.closedAt, undefined, "deletion does not yet close the persisted subscription");
     } finally { release.resolve(); await cleanup(); }
@@ -440,13 +444,16 @@ for (const ending of ["error", "end"] as const) {
 test("OpenCode backs off repeated event-stream failures and cleanup interrupts the wait", async (t) => {
   const f = await fixture(t);
   let subscriptions = 0;
+  let hook!: (event: any) => Promise<void>;
   t.mock.method(console, "warn", () => {});
   const context = {
     location: { directory: f.b },
-    session: { hook: async () => ({ dispose: async () => {} }) },
+    session: { get: async () => ({ location: { directory: f.b }, time: { created: 1 } }), hook: async (_name: string, handler: typeof hook) => { hook = handler; return { dispose: async () => {} }; } },
     event: { async *subscribe() { subscriptions++; throw new Error("offline"); } },
   };
   const cleanup = await plugin.setup(context as unknown as Plugin.Context);
+  assert.equal(subscriptions, 0);
+  await hook({ sessionID: "enabled", prompt: { text: "Enable GitRelay" } });
   await delay(100);
   assert.equal(subscriptions, 1);
   await waitFor(async () => subscriptions >= 2);
@@ -579,8 +586,7 @@ test("OpenCode does not persist a subscription outside a Git repository", async 
   f.tick();
   f.tick();
   assert.deepEqual(await listSessions(f.b), []);
-  assert.equal(warnings.length, 1);
-  assert.match(String(warnings[0]), /Initialization failed/);
+  assert.equal(warnings.length, 0);
 });
 
 test("OpenCode v2 does not enroll child sessions or sessions in other directories", async (t) => {
@@ -640,7 +646,7 @@ for (const mode of ["sync", "async"] as const) {
     const release = Promise.withResolvers<void>();
     const trigger = Promise.withResolvers<void>();
     const warned = Promise.withResolvers<void>();
-    let onPrompt!: (event: { sessionID: string; metadata?: Record<string, unknown> }) => Promise<void>;
+    let onPrompt!: (event: { sessionID: string; prompt?: { text: string }; metadata?: Record<string, unknown> }) => Promise<void>;
     const context = {
       location: { directory: f.b },
       session: {
@@ -658,7 +664,7 @@ for (const mode of ["sync", "async"] as const) {
     const repo = await repository(f.b);
     const id = "ses_shutdown", key = sessionKey(repo, { adapter: "opencode", session: id, instance: hash([resolve(process.env.XDG_DATA_HOME || homedir()), 1]) }, "refs/heads/main");
     try {
-      await onPrompt({ sessionID: id });
+      await onPrompt({ sessionID: id, prompt: { text: "Enable GitRelay" } });
       await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "held" });
       t.mock.timers.tick(5000);
       await started.promise;
@@ -675,3 +681,55 @@ for (const mode of ["sync", "async"] as const) {
     } finally { release.resolve(); }
   });
 }
+
+test("OpenCode ordinary prompts stay off and activation is scoped to a native session", async (t) => {
+  const calls: Prompt[] = [];
+  const f = await harness(t, async (input) => { calls.push(input); });
+  await f.enroll(f.id, undefined, "Fix this bug");
+  await f.enroll("other", undefined, "Explain parallel development");
+  f.tick();
+  assert.deepEqual(await listSessions(f.b), []);
+  await f.enroll(f.id, undefined, "请用多个工作树开发");
+  await f.enroll("other", undefined, "Fix this bug");
+  assert.deepEqual((await listSessions(f.b)).map((session) => session.session), [f.id]);
+  const event = await sendMessage({ cwd: f.a, adapter: "codex", session: "sender", text: "enabled session only" });
+  f.tick();
+  await waitFor(async () => (await readReceipt(f.repo, f.key, event.id))?.status === "delivered");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].sessionID, f.id);
+});
+
+test("OpenCode opt-out drains delivery, preserves unread events and permits an explicit rejoin", async (t) => {
+  const calls: Prompt[] = [];
+  const f = await harness(t, async (input) => { calls.push(input); });
+  await f.enroll();
+  const event = await sendMessage({ cwd: f.a, adapter: "codex", session: "sender", text: "preserve unread" });
+  await f.enroll(f.id, undefined, "Disable GitRelay");
+  f.tick();
+  assert.equal(calls.length, 0);
+  assert.equal(await readReceipt(f.repo, f.key, event.id), undefined);
+  assert.ok((await listSessions(f.b))[0].closedAt);
+  await f.enroll(f.id, undefined, "Fix another bug");
+  f.tick();
+  assert.equal(calls.length, 0);
+  await f.enroll();
+  f.tick();
+  await waitFor(async () => (await readReceipt(f.repo, f.key, event.id))?.status === "delivered");
+  assert.equal(calls.length, 1);
+});
+
+
+test("OpenCode can re-enable after a CLI leave before its next polling tick", async (t) => {
+  const calls: Prompt[] = [];
+  const f = await harness(t, async (input) => { calls.push(input); });
+  await f.enroll();
+  const identity = (await listSessions(f.b))[0];
+  const options = { cwd: f.b, ref: identity.ref, adapter: identity.adapter, session: identity.session, instance: identity.instance };
+  await sessionActivation(options, false);
+  await leaveSession(options);
+  await f.enroll();
+  const event = await sendMessage({ cwd: f.a, adapter: "codex", session: "sender", text: "enabled again" });
+  f.tick();
+  await waitFor(async () => (await readReceipt(f.repo, f.key, event.id))?.status === "delivered");
+  assert.equal(calls.length, 1);
+});

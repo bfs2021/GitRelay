@@ -21,46 +21,36 @@ async function fixture(t: { after(fn: () => Promise<void>): void }) {
   return root;
 }
 
-function expected(kind: "runtime" | "pi" | "claude", entries: [string, Buffer][]): string {
+function expected(entries: [string, Buffer][]): string {
   const hash = createHash("sha256");
-  for (const [path, data] of entries) {
-    if (kind === "runtime") hash.update(`${Buffer.byteLength(path)}:`).update(path).update(`${data.length}:`);
-    else if (kind === "pi") hash.update(JSON.stringify([path, data.length])).update("\0");
-    else hash.update(path).update("\0").update(String(data.length)).update("\0");
-    hash.update(data);
-  }
+  for (const [path, data] of entries) hash.update(`${Buffer.byteLength(path)}:`).update(path).update(`${data.length}:`).update(data);
   return hash.digest("hex");
 }
 
-test("installer digests keep the three published formats, including large and Unicode files", async (t) => {
+test("installer digest keeps the published runtime format, including large and Unicode files", async (t) => {
   const root = await fixture(t), large = await readFile(join(root, "dist", "中"));
-  assert.equal(await installerDigest(join(root, "dist"), [""], "runtime"), expected("runtime", [["中", large]]));
-  assert.equal(await installerDigest(root, ["package.json", "src", "skills/worktree-coordination"], "pi"), expected("pi", [["package.json", Buffer.from("{}")], [join("src", "a"), Buffer.from([0, 255])], [join("skills", "worktree-coordination", "SKILL.md"), Buffer.from("skill")]]));
-  assert.equal(await installerDigest(root, ["dist", "skills", "docs"], "claude"), expected("claude", [[join("dist", "中"), large], [join("skills", "worktree-coordination", "SKILL.md"), Buffer.from("skill")], [join("docs", "a"), Buffer.alloc(0)]]));
+  assert.equal(await installerDigest(join(root, "dist")), expected([["中", large]]));
 });
 
 test("installer digests retain top-level link compatibility and reject nested links", { skip: process.platform === "win32" }, async (t) => {
   const root = await fixture(t), real = join(root, "real-dist");
   await rename(join(root, "dist"), real); await symlink("real-dist", join(root, "dist"));
-  assert.equal(await installerDigest(root, ["dist"], "claude"), expected("claude", [[join("dist", "中"), await readFile(join(real, "中"))]]));
-  assert.equal(await installerDigest(join(root, "dist"), [""], "runtime"), expected("runtime", [["中", await readFile(join(real, "中"))]]));
-  await assert.rejects(installerDigest(root, ["dist"], "pi"), /Unexpected installer entry/);
+  assert.equal(await installerDigest(join(root, "dist")), expected([["中", await readFile(join(real, "中"))]]));
   await symlink("a", join(root, "src", "nested-link"));
-  await assert.rejects(installerDigest(root, ["src"], "pi"), /Unexpected installer entry/);
+  await assert.rejects(installerDigest(join(root, "src")), /Unexpected installer entry/);
 });
 
-for (const kind of ["runtime", "pi", "claude"] as const) test(`${kind} installer digest rejects a file replaced by a FIFO without hanging`, { skip: process.platform === "win32" }, async (t) => {
+test("installer digest rejects a file replaced by a FIFO without hanging", { skip: process.platform === "win32" }, async (t) => {
   const root = await fixture(t), originalOpen = fs.promises.open;
-  const directory = kind === "runtime" ? join(root, "dist") : root;
-  const names = kind === "runtime" ? [""] : kind === "pi" ? ["src"] : ["docs"];
-  const victim = kind === "runtime" ? join(root, "dist", "中") : kind === "pi" ? join(root, "src", "a") : join(root, "docs", "a");
+  const directory = join(root, "dist");
+  const victim = join(directory, "中");
   let injected = false;
   fs.promises.open = async function (path, ...args) {
     if (!injected && String(path) === victim) { injected = true; await rename(victim, `${victim}.old`); execFileSync("mkfifo", [victim]); }
     return originalOpen(path, ...args);
   } as typeof fs.promises.open;
   syncBuiltinESMExports();
-  try { await assert.rejects(installerDigest(directory, names, kind), /changed|ELOOP|Unexpected/); }
+  try { await assert.rejects(installerDigest(directory), /changed|ELOOP|Unexpected/); }
   finally { fs.promises.open = originalOpen; syncBuiltinESMExports(); }
   assert.equal(injected, true);
 });
@@ -75,7 +65,7 @@ test("installer digest rejects changed directory entries and replaced file paths
     return result;
   } as typeof fs.promises.readdir;
   syncBuiltinESMExports();
-  try { await assert.rejects(installerDigest(root, ["src"], "pi"), /directory changed/); }
+  try { await assert.rejects(installerDigest(join(root, "src")), /directory changed/); }
   finally { fs.promises.readdir = originalRead; syncBuiltinESMExports(); }
   await rm(join(directory, "new"));
   const originalOpen = fs.promises.open;
@@ -86,10 +76,10 @@ test("installer digest rejects changed directory entries and replaced file paths
     return opened;
   } as typeof fs.promises.open;
   syncBuiltinESMExports();
-  try { await assert.rejects(installerDigest(root, ["src"], "pi"), /file changed/); }
+  try { await assert.rejects(installerDigest(join(root, "src")), /file changed/); }
   finally { fs.promises.open = originalOpen; syncBuiltinESMExports(); }
   assert.equal(await readFile(victim, "utf8"), "replacement");
-  await assert.rejects(installerDigest(join(root, "missing"), [""], "runtime"), { code: "ENOENT" });
+  await assert.rejects(installerDigest(join(root, "missing")), { code: "ENOENT" });
 });
 
 test("installer digest checks cancellation between chunks and closes its descriptor", async (t) => {
@@ -106,7 +96,7 @@ test("installer digest checks cancellation between chunks and closes its descrip
     return opened;
   } as typeof fs.promises.open;
   syncBuiltinESMExports();
-  try { await assert.rejects(installerDigest(join(root, "dist"), [""], "runtime", controller.signal), { name: "AbortError" }); }
+  try { await assert.rejects(installerDigest(join(root, "dist"), controller.signal), { name: "AbortError" }); }
   finally { fs.promises.open = originalOpen; syncBuiltinESMExports(); }
   assert.ok(handle);
   await assert.rejects(handle.stat(), { code: "EBADF" });
@@ -128,7 +118,7 @@ test("installer digest rejects a file that grows after it is opened", async (t) 
     return opened;
   } as typeof fs.promises.open;
   syncBuiltinESMExports();
-  try { await assert.rejects(installerDigest(root, ["src"], "pi"), /file changed/); }
+  try { await assert.rejects(installerDigest(join(root, "src")), /file changed/); }
   finally { fs.promises.open = originalOpen; syncBuiltinESMExports(); }
   assert.equal(injected, true);
 });
@@ -144,7 +134,7 @@ test("installer digest rejects an in-place edit after the final descriptor stat"
     return (originalLstat as (...input: unknown[]) => Promise<unknown>)(path, ...args);
   } as typeof fs.promises.lstat;
   syncBuiltinESMExports();
-  try { await assert.rejects(installerDigest(root, ["src"], "pi"), /file changed/); }
+  try { await assert.rejects(installerDigest(join(root, "src")), /file changed/); }
   finally { fs.promises.lstat = originalLstat; syncBuiltinESMExports(); }
   assert.deepEqual(await readFile(victim), Buffer.from([255, 0]));
   assert.equal(seen, 2);
@@ -161,7 +151,7 @@ test("installer digest rechecks earlier files after reading later files", async 
     return opened;
   } as typeof fs.promises.open;
   syncBuiltinESMExports();
-  try { await assert.rejects(installerDigest(root, ["src"], "pi"), /entry changed/); }
+  try { await assert.rejects(installerDigest(join(root, "src")), /entry changed/); }
   finally { fs.promises.open = originalOpen; syncBuiltinESMExports(); }
   assert.deepEqual(await readFile(first), Buffer.from([255, 0]));
   assert.equal(injected, true);
@@ -184,7 +174,7 @@ test("installer digest settles recheck reads before returning cancellation", asy
     return value;
   } as typeof fs.promises.lstat;
   syncBuiltinESMExports();
-  try { await assert.rejects(installerDigest(root, ["src"], "pi", controller.signal), { name: "AbortError" }); }
+  try { await assert.rejects(installerDigest(join(root, "src"), controller.signal), { name: "AbortError" }); }
   finally { fs.promises.lstat = originalLstat; syncBuiltinESMExports(); }
   assert.equal(settled, true);
 });

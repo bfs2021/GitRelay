@@ -10,7 +10,6 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { consumeMailbox } from "../../src/core/consumer.ts";
 import { collectGarbage } from "../../src/core/cleanup.ts";
-import { installPi } from "../../src/cli/install-pi.ts";
 import { installCodex } from "../../src/cli/install-codex.ts";
 import { sendMessage, sessionKey } from "../../src/core/mailbox.ts";
 import { BusyError, GC_LOCK_TOKEN, readJson, repository, withLock, writeJson } from "../../src/core/store.ts";
@@ -281,13 +280,6 @@ test("dangling state links are not mistaken for missing data", { skip: process.p
   const workspace = join(directory, "workspace"), agent = join(directory, "agent");
   await mkdir(workspace); await mkdir(agent);
   await writeFile(join(workspace, ".git-relay-owner"), "git-relay installer v1\n");
-  const piState = join(workspace, "pi.json");
-  await symlink("missing-state.json", piState);
-  await assert.rejects(installPi({ workspace, sourceRoot: directory, env: { ...process.env, PI_CODING_AGENT_DIR: agent } }), /Invalid pi installation record/);
-  assert.ok((await lstat(piState)).isSymbolicLink());
-  assert.equal(await readlink(piState), "missing-state.json");
-  assert.deepEqual(await readdir(agent), []);
-
   const home = join(directory, "codex-home"), bin = join(directory, "bin");
   await mkdir(home); await mkdir(bin);
   await writeFile(join(bin, "codex"), '#!/bin/sh\nprintf \'{"installed":[]}\\n\'\n', { mode: 0o755 });

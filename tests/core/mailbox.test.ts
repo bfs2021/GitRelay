@@ -56,7 +56,7 @@ test("Claude Code publishes one message; Codex and OpenCode receive independent 
   const opencode = { cwd: f.c, ref, adapter: "opencode", session: "same-native-id", async deliver(batch: Notification[]) { c.push(...batch); } };
   await consumeMailbox(codex);
   await consumeMailbox(opencode);
-  const event = await sendMessage({ cwd: f.a, adapter: "claude-code", session: "A", text: "The interface has changed; check its callers." });
+  const event = await sendMessage({ cwd: f.a, adapter: "codex", session: "A", text: "The interface has changed; check its callers." });
   assert.equal(event.recipients.length, 2);
   await consumeMailbox(codex);
   assert.equal(b[0].event.id, event.id);
@@ -83,7 +83,7 @@ test("a shared main event is published once; one agent's failed delivery does no
   await writeFile(join(f.c, "shared.txt"), "C local\n");
   const deliveries: string[] = [];
   let fail = false;
-  const a = { cwd: f.a, ref, adapter: "claude-code", session: "A", async deliver() { assert.fail("clean source should not be notified"); } };
+  const a = { cwd: f.a, ref, adapter: "codex", session: "A", async deliver() { assert.fail("clean source should not be notified"); } };
   const b = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver(batch: Notification[]) { if (fail) throw new Error("offline"); deliveries.push(...batch.map((n) => n.event.id)); } };
   const c = { cwd: f.c, ref, adapter: "opencode", session: "C", async deliver(batch: Notification[]) { deliveries.push(...batch.map((n) => n.event.id)); } };
   await consumeMailbox(a);
@@ -112,7 +112,7 @@ test("file-scoped messages only reach overlapping worktrees, and new sessions do
   const opencode = { cwd: f.c, ref, adapter: "opencode", session: "C", async deliver() { c++; } };
   await consumeMailbox(codex);
   await consumeMailbox(opencode);
-  await sendMessage({ cwd: f.a, adapter: "claude-code", session: "A", text: "shared changed", files: ["shared.txt"] });
+  await sendMessage({ cwd: f.a, adapter: "codex", session: "A", text: "shared changed", files: ["shared.txt"] });
   await consumeMailbox(codex);
   await consumeMailbox(opencode);
   assert.equal(b, 1);
@@ -156,7 +156,7 @@ test("bounded batches leave remaining messages for the next check", async (t) =>
   const received: string[] = [];
   const options = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver(batch: Notification[]) { received.push(...batch.map((n) => n.event.id)); } };
   await consumeMailbox(options);
-  for (let i = 0; i < 41; i++) await sendMessage({ cwd: f.a, adapter: "claude-code", session: "A", text: `message ${i}` });
+  for (let i = 0; i < 41; i++) await sendMessage({ cwd: f.a, adapter: "codex", session: "A", text: `message ${i}` });
   const expected = (await eventsIn(await repository(f.b))).map((event) => event.id);
   for (const count of [8, 16, 24, 32, 40, 41]) {
     await consumeMailbox(options);
@@ -232,7 +232,7 @@ test("repo identity is shared across worktrees but not across separate clones", 
   const clone = await repository(join(f.root, "clone"));
   assert.notEqual(a.id, clone.id);
   await consumeMailbox({ cwd: f.b, ref, adapter: "codex", session: "B", async deliver() {} });
-  const message = await sendMessage({ cwd: clone.root, adapter: "claude-code", session: "clone", text: "must not cross clones" });
+  const message = await sendMessage({ cwd: clone.root, adapter: "codex", session: "clone", text: "must not cross clones" });
   assert.equal(message.recipients.length, 0);
 });
 

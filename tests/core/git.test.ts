@@ -11,7 +11,7 @@ function git(cwd: string, ...args: string[]) {
 }
 
 async function fixture(t: { after(fn: () => Promise<void>): void }) {
-  const root = await mkdtemp(join(tmpdir(), "pi-worktree-"));
+  const root = await mkdtemp(join(tmpdir(), "git-relay-worktree-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const repo = join(root, "repo");
   await mkdir(repo);
@@ -47,13 +47,13 @@ test("protect primary, current/subdirectory/symlink, locked and dirty worktrees"
   const { repo, root } = await fixture(t);
   const path = await addWorktree(repo, join(root, "linked"), "feature/safe", true);
   await assert.rejects(removeWorktree(repo, repo), /main worktree/);
-  await assert.rejects(removeWorktree(path, path), /current pi/);
+  await assert.rejects(removeWorktree(path, path), /current worktree/);
   const sub = join(path, "sub");
   await mkdir(sub);
-  await assert.rejects(removeWorktree(sub, path), /current pi/);
+  await assert.rejects(removeWorktree(sub, path), /current worktree/);
   const alias = join(root, "alias");
   await symlink(sub, alias, "dir");
-  await assert.rejects(removeWorktree(alias, path), /current pi/);
+  await assert.rejects(removeWorktree(alias, path), /current worktree/);
   await rm(sub, { recursive: true });
   git(repo, "worktree", "lock", path);
   await assert.rejects(removeWorktree(repo, path), /locked/);

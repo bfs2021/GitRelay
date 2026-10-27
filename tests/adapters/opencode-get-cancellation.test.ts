@@ -15,7 +15,7 @@ for (const phase of ["registration", "scan"] as const) {
       const f = await fixture(t);
       const held = Promise.withResolvers<{ location: { directory: string } }>();
       const started = Promise.withResolvers<void>();
-      let hook!: (event: { sessionID: string }) => Promise<void>;
+      let hook!: (event: { sessionID: string; prompt?: { text: string } }) => Promise<void>;
       let calls = 0;
       t.mock.method(console, "warn", () => {});
       const session = { location: { directory: f.b }, time: { created: 1 } };
@@ -36,7 +36,7 @@ for (const phase of ["registration", "scan"] as const) {
         } },
       };
       const close = await plugin.setup(ctx as unknown as Plugin.Context);
-      const lookup = hook({ sessionID: "held" });
+      const lookup = hook({ sessionID: "held", prompt: { text: "Enable GitRelay" } });
       await deadline(started.promise);
       await deadline(close());
       await deadline(lookup);
@@ -52,7 +52,7 @@ test("OpenCode deletion releases concurrent pending lookups and allows a new loo
   const ready = [Promise.withResolvers<{ location: { directory: string } }>(), Promise.withResolvers<{ location: { directory: string } }>()];
   const deleted = Promise.withResolvers<void>();
   const processed = Promise.withResolvers<void>();
-  let hook!: (event: { sessionID: string }) => Promise<void>;
+  let hook!: (event: { sessionID: string; prompt?: { text: string } }) => Promise<void>;
   let calls = 0;
   const warnings: string[] = [];
   t.mock.method(console, "warn", (message: unknown) => { warnings.push(String(message)); });
@@ -71,12 +71,12 @@ test("OpenCode deletion releases concurrent pending lookups and allows a new loo
     } },
   };
   const close = await plugin.setup(ctx as unknown as Plugin.Context);
-  const old = [hook({ sessionID: "same" }), hook({ sessionID: "same" })];
+  const old = [hook({ sessionID: "same", prompt: { text: "Enable GitRelay" } }), hook({ sessionID: "same", prompt: { text: "Enable GitRelay" } })];
   assert.equal(calls, 2);
   deleted.resolve();
   await deadline(processed.promise);
   await deadline(Promise.all(old));
-  await deadline(hook({ sessionID: "same" }));
+  await deadline(hook({ sessionID: "same", prompt: { text: "Enable GitRelay" } }));
   assert.ok(warnings.some((message) => message.includes("new lookup")));
   ready[0].resolve({ location: { directory: f.b } });
   ready[1].reject(new Error("late host error"));

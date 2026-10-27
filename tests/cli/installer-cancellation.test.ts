@@ -6,7 +6,6 @@ import { delimiter, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { installPi } from "../../src/cli/install-pi.ts";
 import { installOpenCode } from "../../src/cli/install-opencode.ts";
 
 const repo = fileURLToPath(new URL("../../", import.meta.url));
@@ -45,43 +44,6 @@ test("PID wait reports a failed CLI immediately with stderr", async (t) => {
   await closed;
 });
 
-test("pi RPC validation kills a hung process group on cancellation and timeout, preserving the active installation", { skip: process.platform === "win32", timeout: 30_000 }, async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "git-relay-pi-cancel-"));
-  let running: number[] = [];
-  t.after(async () => {
-    if (running.length) { try { process.kill(-running[0], "SIGKILL"); } catch {} }
-    await rm(dir, { recursive: true, force: true });
-  });
-  const workspace = join(dir, "workspace"), agent = join(dir, "agent"), sourceRoot = join(dir, "source"), bin = join(dir, "bin"), pidfile = join(dir, "pids");
-  await mkdir(workspace); await mkdir(agent); await mkdir(sourceRoot); await mkdir(bin);
-  await writeFile(join(workspace, ".git-relay-owner"), "git-relay installer v1\n");
-  await mkdir(join(sourceRoot, "skills"));
-  for (const path of ["package.json", "src", "skills/worktree-coordination"]) await cp(join(repo, path), join(sourceRoot, path), { recursive: true });
-  const settings = '{"theme":"kept","packages":[]}\n';
-  await writeFile(join(agent, "settings.json"), settings);
-  const fake = join(bin, "pi");
-  const script = (reply: boolean) => `#!/bin/sh\ntrap '' TERM\n/bin/sleep 30 &\nprintf '%s %s\\n' "$$" "$!" > "$TEST_PIDS"\n${reply ? `printf '%s\\n' '{"id":"git-relay-install-check","success":true,"data":{"commands":[{"name":"worktree"},{"name":"skill:worktree-coordination"}]}}'\n` : ""}wait\n`;
-  await writeFile(fake, script(true), { mode: 0o755 }); await chmod(fake, 0o755);
-  const env = { ...process.env, HOME: dir, PI_CODING_AGENT_DIR: agent, PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`, TEST_PIDS: pidfile };
-  await installPi({ workspace, sourceRoot, env });
-  running = await waitForPids(pidfile); assertStopped(running); running = [];
-  const state = await readFile(join(workspace, "pi.json"), "utf8"), entry = await readFile(join(agent, "extensions", "git-relay.ts"), "utf8");
-  await writeFile(join(sourceRoot, "src", "next-version"), "new\n");
-  await writeFile(fake, script(false)); await rm(pidfile);
-  const controller = new AbortController();
-  const cancelled = assert.rejects(installPi({ workspace, sourceRoot, env, signal: controller.signal }), { name: "AbortError" });
-  running = await waitForPids(pidfile); controller.abort(); await cancelled; assertStopped(running); running = [];
-  assert.equal(await readFile(join(workspace, "pi.json"), "utf8"), state);
-  assert.equal(await readFile(join(agent, "extensions", "git-relay.ts"), "utf8"), entry);
-  assert.equal(await readFile(join(agent, "settings.json"), "utf8"), settings);
-  await assert.rejects(access(join(workspace, "pi-install.lock")), { code: "ENOENT" });
-  await rm(pidfile);
-  const timedOut = assert.rejects(installPi({ workspace, sourceRoot, env }), /Pi runtime validation timed out/);
-  running = await waitForPids(pidfile); await timedOut; assertStopped(running); running = [];
-  assert.equal(await readFile(join(workspace, "pi.json"), "utf8"), state);
-  await assert.rejects(access(join(workspace, "pi-install.lock")), { code: "ENOENT" });
-});
-
 test("OpenCode staged import kills a hung process group on cancellation and timeout without switching the active revision", { skip: process.platform === "win32", timeout: 20_000 }, async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "git-relay-opencode-cancel-"));
   let running: number[] = [];
@@ -110,45 +72,7 @@ test("OpenCode staged import kills a hung process group on cancellation and time
   await assert.rejects(access(join(root, "install.lock")), { code: "ENOENT" });
 });
 
-test("pi interrupted skill publication keeps its pending journal and resumes without claiming user entries", { skip: process.platform === "win32", timeout: 20_000 }, async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "git-relay-pi-ln-cancel-"));
-  let running: number[] = [];
-  t.after(async () => {
-    if (running.length) { try { process.kill(-running[0], "SIGKILL"); } catch {} }
-    await rm(dir, { recursive: true, force: true });
-  });
-  const workspace = join(dir, "workspace"), agent = join(dir, "agent"), sourceRoot = join(dir, "source"), bin = join(dir, "bin"), pidfile = join(dir, "pids");
-  await mkdir(workspace); await mkdir(agent); await mkdir(sourceRoot); await mkdir(bin);
-  await writeFile(join(workspace, ".git-relay-owner"), "git-relay installer v1\n");
-  await mkdir(join(sourceRoot, "skills"));
-  for (const path of ["package.json", "src", "skills/worktree-coordination"]) await cp(join(repo, path), join(sourceRoot, path), { recursive: true });
-  await mkdir(join(agent, "extensions"));
-  const other = join(agent, "extensions", "user.ts");
-  await writeFile(other, "user entry\n");
-  await writeFile(join(bin, "pi"), `#!/bin/sh\nprintf '%s\\n' '{"id":"git-relay-install-check","success":true,"data":{"commands":[{"name":"worktree"},{"name":"skill:worktree-coordination"}]}}'\n`, { mode: 0o755 });
-  await writeFile(join(bin, "ln"), '#!/bin/sh\ntrap "" TERM\n/bin/sleep 30 &\nprintf "%s %s\\n" "$$" "$!" > "$TEST_LN_PIDS"\nwait\n', { mode: 0o755 });
-  const env = { ...process.env, HOME: dir, PI_CODING_AGENT_DIR: agent, PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`, TEST_LN_PIDS: pidfile };
-  const controller = new AbortController();
-  const cancelled = assert.rejects(installPi({ workspace, sourceRoot, env, signal: controller.signal }), { name: "AbortError" });
-  running = await waitForPids(pidfile); controller.abort(); await cancelled; assertStopped(running); running = [];
-  const pending = JSON.parse(await readFile(join(workspace, "pi.json"), "utf8"));
-  assert.ok(pending.pending); assert.equal(pending.current, null);
-  assert.equal(await readFile(other, "utf8"), "user entry\n");
-  await assert.rejects(access(join(workspace, "pi-install.lock")), { code: "ENOENT" });
-  await rm(pidfile);
-  const timedOut = assert.rejects(installPi({ workspace, sourceRoot, env }), /timed out/);
-  running = await waitForPids(pidfile); await timedOut; assertStopped(running); running = [];
-  assert.equal(JSON.parse(await readFile(join(workspace, "pi.json"), "utf8")).pending, pending.pending);
-  await rm(join(bin, "ln"));
-  await installPi({ workspace, sourceRoot, env });
-  const recovered = JSON.parse(await readFile(join(workspace, "pi.json"), "utf8"));
-  assert.equal(recovered.current, pending.pending); assert.equal(recovered.pending, undefined);
-  assert.match(await readFile(join(agent, "extensions", "git-relay.ts"), "utf8"), /pi-loader/);
-  assert.ok((await readlink(join(agent, "skills", "worktree-coordination"))).includes(recovered.current.slice(21)));
-  assert.equal(await readFile(other, "utf8"), "user entry\n");
-});
-
-test("CLI SIGINT reaches pi and OpenCode validation and reports cancellation", { skip: process.platform === "win32", timeout: 20_000 }, async (t) => {
+test("CLI SIGINT reaches OpenCode validation and reports cancellation", { skip: process.platform === "win32", timeout: 20_000 }, async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "git-relay-install-sigint-"));
   let clientGroup = 0, validationGroup = 0;
   t.after(async () => {
@@ -159,20 +83,15 @@ test("CLI SIGINT reaches pi and OpenCode validation and reports cancellation", {
   await mkdir(source); await mkdir(bin); await cp(join(repo, "src"), join(source, "src"), { recursive: true });
   await mkdir(join(source, "vendor")); await cp(join(repo, "vendor", "smol-toml"), join(source, "vendor", "smol-toml"), { recursive: true });
   await writeFile(join(source, "package.json"), '{"type":"module"}\n');
-  const fakePi = join(bin, "pi"), fakeOpenCode = join(bin, "opencode");
-  await writeFile(fakePi, '#!/bin/sh\nif [ "$1" = "--version" ]; then printf "1.4.0\\n"; exit 0; fi\ntrap "" TERM\n/bin/sleep 30 &\nprintf "%s %s\\n" "$$" "$!" > "$TEST_PIDS"\nwait\n', { mode: 0o755 });
+  const fakeOpenCode = join(bin, "opencode");
   await writeFile(fakeOpenCode, '#!/bin/sh\nprintf "2.1.2\\n"\n', { mode: 0o755 });
   await mkdir(join(source, "dist", "adapters", "opencode"), { recursive: true });
   await writeFile(join(source, "dist", "adapters", "opencode", "index.js"), `import { spawn } from 'node:child_process';\nimport { writeFileSync } from 'node:fs';\nprocess.on('SIGTERM', () => {});\nconst child = spawn('/bin/sh', ['-c', "trap '' TERM; exec /bin/sleep 30"]);\nwriteFileSync(process.env.TEST_PIDS, process.pid + ' ' + child.pid);\nawait new Promise(() => setInterval(() => {}, 1000));\nexport default { id: 'git-relay', setup() {} };\n`);
-  for (const platform of ["pi", "opencode"]) {
+  for (const platform of ["opencode"]) {
     const home = join(dir, platform), agent = join(home, "agent");
     await mkdir(home); await mkdir(agent);
     await writeFile(join(agent, "settings.json"), '{"theme":"kept","packages":[]}\n');
-    const env = { ...process.env, HOME: home, PI_CODING_AGENT_DIR: agent, XDG_DATA_HOME: join(home, "data"), XDG_CONFIG_HOME: join(home, "config"), PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`, TEST_PIDS: pidfile };
-    if (platform === "pi") {
-      await mkdir(join(source, "skills"));
-      await cp(join(repo, "skills", "worktree-coordination"), join(source, "skills", "worktree-coordination"), { recursive: true });
-    }
+    const env = { ...process.env, HOME: home, XDG_DATA_HOME: join(home, "data"), XDG_CONFIG_HOME: join(home, "config"), PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`, TEST_PIDS: pidfile };
     const child = spawn(process.execPath, ["--experimental-strip-types", join(source, "src", "cli", "main.ts"), "install", "--platform", platform], { env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
     clientGroup = child.pid!;
     let output = "", errors = "";
@@ -186,7 +105,7 @@ test("CLI SIGINT reaches pi and OpenCode validation and reports cancellation", {
     assert.equal(await closed, 130, errors); clientGroup = 0;
     assert.equal(output, ""); assert.match(errors, /operation may have completed.*uninstall --dry-run/); assertStopped(pids); validationGroup = 0;
     assert.equal(await readFile(join(agent, "settings.json"), "utf8"), '{"theme":"kept","packages":[]}\n');
-    await assert.rejects(access(join(home, "data", "git-relay", platform === "pi" ? "pi-install.lock" : "install.lock")), { code: "ENOENT" });
+    await assert.rejects(access(join(home, "data", "git-relay", "install.lock")), { code: "ENOENT" });
     await rm(pidfile);
   }
 });

@@ -12,7 +12,7 @@ const exec = promisify(execFile);
 
 const read = (path: string) => readFile(new URL(`../../${path}`, import.meta.url), "utf8");
 
-test("package exposes portable CLI, pi resources and the shared coordination skill", async () => {
+test("package exposes the CLI and only Codex and OpenCode adapters", async () => {
   const manifest = JSON.parse(await read("package.json"));
   assert.equal(manifest.name, "git-relay");
   assert.equal(manifest.license, "MIT");
@@ -23,17 +23,18 @@ test("package exposes portable CLI, pi resources and the shared coordination ski
   assert.ok(await read("dist/cli/main.js"));
   for (const name of ["publisher", "sessions", "cleanup", "daemon-state", "daemon"]) assert.ok(await read(`dist/core/${name}.js`));
   for (const name of ["maintenance", "acceptance"]) assert.ok(await read(`docs/${name}.md`));
-  assert.deepEqual(manifest.pi.skills, ["./skills/worktree-coordination"]);
-  for (const path of manifest.pi.extensions) assert.ok(await read(path));
+  assert.equal(manifest.pi, undefined);
+  assert.equal(manifest.devDependencies["@earendil-works/pi-coding-agent"], undefined);
+  assert.ok(await read("src/adapters/opencode/index.ts"));
   const skill = await read("skills/worktree-coordination/SKILL.md");
   assert.match(skill, /^---\nname: worktree-coordination\ndescription:/);
   assert.match(skill, /first check establishes a baseline/);
-  for (const agent of ["claude-code", "codex", "cursor"]) {
+  for (const agent of ["codex"]) {
     const hooks = JSON.parse(await read(`src/adapters/${agent}/hooks.json`));
     assert.ok(hooks.hooks);
     assert.ok(JSON.stringify(hooks).includes(`git-relay hook ${agent}`));
   }
-  assert.match(await read("index.ts"), /src\/adapters\/pi\/index.ts/);
+
 });
 
 test("Codex plugin bundles its runtime and runs hooks from an installed path containing spaces", { skip: process.platform === "win32" }, async (t) => {
@@ -63,10 +64,10 @@ test("Codex plugin bundles its runtime and runs hooks from an installed path con
   await assert.rejects(access(join(installed, "node_modules")));
   assert.match(await readFile(join(installed, "dist/vendor/smol-toml/LICENSE"), "utf8"), /Redistribution and use/);
   const hooks = JSON.parse(await readFile(join(installed, plugin.hooks), "utf8"));
-  const command = hooks.hooks.SessionStart[0].hooks[0].command;
+  const command = hooks.hooks.UserPromptSubmit[0].hooks[0].command;
   assert.ok(!command.includes("auto-sync"));
   const child = exec("/bin/sh", ["-c", command], { cwd: f.b, env: { ...process.env, PLUGIN_ROOT: installed } });
-  child.child.stdin!.end(JSON.stringify({ hook_event_name: "SessionStart", session_id: "installed-plugin", cwd: f.b }));
+  child.child.stdin!.end(JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: "Enable GitRelay", session_id: "installed-plugin", cwd: f.b }));
   const result = JSON.parse((await child).stdout);
   assert.match(result.systemMessage, /feature\/b/);
   assert.match(result.systemMessage, /Auto-sync.*Off/);

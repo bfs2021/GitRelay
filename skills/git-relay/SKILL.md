@@ -1,6 +1,6 @@
 ---
 name: git-relay
-description: Inspect local and GitHub branch status and list Git worktrees with GitRelay. Use for branch comparisons or explicitly requested continuous branch monitoring.
+description: Inspect branch status and worktrees when the user explicitly requests GitRelay, or within an authorized parallel or multiple-worktree development session. Start continuous monitoring only when requested.
 ---
 
 # GitRelay

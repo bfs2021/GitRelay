@@ -3,7 +3,6 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { runHook } from "../../src/adapters/hooks.ts";
-import { inspectPi } from "../../src/cli/inspect-pi.ts";
 import { branchStatus } from "../../src/core/branch-status.ts";
 import { GitPathOutputError, git, gitPathLine } from "../../src/core/git.ts";
 import { readReceipt, sendMessage, sessionKey } from "../../src/core/mailbox.ts";
@@ -18,25 +17,24 @@ async function shim(root: string, target: string, value: string) {
 }
 
 test("invalid top-level pathname causes hook error and leaves message unread", { skip: process.platform === "win32" }, async (t) => {
-  const f = await fixture(t), input = { hook_event_name: "SessionStart", session_id: "B", cwd: f.b };
-  await runHook("codex", input, ref, async () => {});
+  const f = await fixture(t), input = { hook_event_name: "UserPromptSubmit", prompt: "Enable GitRelay", session_id: "B", cwd: f.b };
+  await runHook(input, ref, async () => {});
   const event = await sendMessage({ cwd: f.a, ref, adapter: "test", session: "A", text: "unread" });
   const repo = await repository(f.b), key = sessionKey(repo, { adapter: "codex", session: "B" }, ref);
   const bin = await shim(f.root, " rev-parse --show-toplevel", "/invalid_\\377\\n");
   const prior = process.env.PATH; process.env.PATH = `${bin}:${prior ?? ""}`;
-  try { await assert.rejects(runHook("codex", input, ref, async () => assert.fail("no silent response")), GitPathOutputError); }
+  try { await assert.rejects(runHook(input, ref, async () => assert.fail("no silent response")), GitPathOutputError); }
   finally { if (prior === undefined) delete process.env.PATH; else process.env.PATH = prior; }
   assert.equal(await readReceipt(repo, key, event.id), undefined);
-  const out: object[] = []; await runHook("codex", input, ref, async (value) => { out.push(value); });
+  const out: object[] = []; await runHook(input, ref, async (value) => { out.push(value); });
   assert.equal(out.length, 1); assert.ok(JSON.stringify(out[0]).includes("unread"));
 });
 
-test("invalid common directory path is rejected by repository and pi inspection", { skip: process.platform === "win32" }, async (t) => {
+test("invalid common directory path is rejected by repository discovery", { skip: process.platform === "win32" }, async (t) => {
   const f = await fixture(t), bin = await shim(f.root, " rev-parse --path-format=absolute --git-common-dir", "/invalid_\\377\\n");
   const prior = process.env.PATH; process.env.PATH = `${bin}:${prior ?? ""}`;
   try {
     await assert.rejects(repository(f.b), GitPathOutputError);
-    await assert.rejects(inspectPi(f.b, ref, "B", "a".repeat(64)), GitPathOutputError);
   } finally { if (prior === undefined) delete process.env.PATH; else process.env.PATH = prior; }
 });
 

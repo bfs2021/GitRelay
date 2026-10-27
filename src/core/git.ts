@@ -135,7 +135,7 @@ export async function removeWorktree(cwd: string, path: string): Promise<void> {
   const current = await realpath(cwd);
   const inside = relative(target, current);
   if (!inside || (!isAbsolute(inside) && inside !== ".." && !inside.startsWith(`..${sep}`))) {
-    throw new Error("Cannot remove the current pi worktree. Start pi in another worktree first.");
+    throw new Error("Cannot remove the current worktree. Run Git from another worktree first.");
   }
   // shortcut: Git has no identity-conditional removal; restore only with atomic target binding.
   throw new Error("Automatic worktree removal is temporarily unavailable because Git cannot atomically verify the selected worktree. Stop other worktree operations, inspect the target and back up ignored files before using Git manually.");

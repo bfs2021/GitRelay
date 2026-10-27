@@ -25,7 +25,7 @@ test("CLI acceptance: leave preserves unread messages, join restores them, GC re
   const f = await fixture(t);
   const b = ["--cwd", f.b, "--agent", "codex", "--session", "B"];
   const c = ["--cwd", f.c, "--agent", "opencode", "--session", "C"];
-  const sender = ["--cwd", f.a, "--agent", "claude-code", "--session", "A"];
+  const sender = ["--cwd", f.a, "--agent", "codex", "--session", "A"];
   await run("check", ...b);
   await run("check", ...c);
   const pending = JSON.parse((await run("send", ...sender, "--message", "must survive leave")).stdout);

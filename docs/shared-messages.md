@@ -1,5 +1,8 @@
 # GitRelay: User-level shared message storage
 
+Native Codex/OpenCode receivers are off by default. Explicitly enable each
+conversation before publishing messages; see [on-demand sessions](integrations.md#on-demand-sessions).
+
 All adapters use the same platform-independent message layer. Messages and receipts live in the user state directory; a writable Git common directory contains a repository identity marker.
 
 The state and Git common directories must not be modified concurrently by
@@ -27,7 +30,7 @@ The default is `~/.local/state/worktree-agent-sync`, or `$XDG_STATE_HOME/worktre
 └── receipts/<session-key>/
     ├── <event-id>.json           # Independent delivery/irrelevance receipt
     ├── delivery-cursor.json     # Scheduling only; never an acknowledgement
-    └── <event-id>.<hash>.pi-proof # pi's pre-delivery message proof, if applicable
+    └── <event-id>.<hash>.pi-proof # legacy pre-delivery proof; retained for recovery
 ```
 
 - `repo-id` is the SHA-256 of the canonical absolute Git common-directory path and a persistent random repository identity. GitRelay creates `<git-common-dir>/.git-relay-id` on first use, containing a 64-character hexadecimal identity. Worktrees of the same repository share it; independent clones at different paths remain separate.
@@ -35,7 +38,7 @@ The default is `~/.local/state/worktree-agent-sync`, or `$XDG_STATE_HOME/worktre
 - Existing markers must be regular files with valid contents. GitRelay preserves and rejects invalid markers and links. Do not remove or replace a marker while clients or the daemon are running. If a marker is copied or restored at the same path, it identifies the same state; give an independent replacement a new identity and follow the explicit recovery prompts. A separate process replacing the Git directory during an operation cannot be serialized by GitRelay.
 - Initial state publication requires hard-link support in the state root's `repos` directory. If the link is refused, initialization can leave an empty directory without an ownership marker; retries and automatic recovery refuse it because its ownership cannot be proved. Stop participating processes and inspect the reported path before any manual recovery. State directories and events are preserved. An external repository identity can avoid creating a marker in an unsupported Git common directory, but does not remove the state-root hard-link requirement.
 - Session keys combine the real worktree path, monitored ref, adapter, native session ID, and optional native `instance`. Pi/OpenCode supply an instance to isolate recreated histories; existing unbound inboxes are preserved. Identical IDs on different platforms do not consume each other's messages; subscriptions to different refs are independent.
-- Hooks with a nonempty `agent_id` return an empty response. This skips subagents and also Claude in-process teammate calls carrying that field; they do not register subscriptions or consume their parent's inbox. The parent can check its inbox at its next hook. See the [Claude integration limits](integrations.md#claude-code).
+- Hooks with a nonempty `agent_id` return an empty response. This skips Codex subagents; they do not register subscriptions or consume their parent's inbox. The parent can check its inbox at its next hook.
 - Directories are created with mode `0700`, JSON files with `0600`. Messages stay outside version control. Windows permissions still depend on system ACLs.
 - The selected state root and its ancestors may be symbolic links, but GitRelay's managed child directories (including each repository's `sessions`, `events`, `receipts`, `refs` and `trash`, and accessed `receipts/<session-key>` directories) must be real directories. Delivery receipts must be regular files, not symbolic links. GitRelay rejects and preserves these links; stop all participants and inspect any existing linked layout before moving its contents into real managed directories. This changes prior behavior for linked receipt files and internal directories. Other JSON readers can still follow file links, and hard links are not rejected. These checks address static layouts, not a process replacing directories or modifying files after inspection. Windows behavior has not been verified for this change.
 - This is local cooperation by one OS user, not a sandbox against malicious processes under that user or a cross-user/cross-machine service.
@@ -71,12 +74,12 @@ git-relay sessions --cwd /project/worktree-A
 
 # Send to other registered sessions in this repository.
 git-relay send --cwd /project/worktree-A \
-  --agent claude-code --session claude-session-A \
+  --agent codex --session codex-session-A \
   --message 'The configuration interface changed. Check implementations that depend on it.'
 
 # Match only sessions modifying these files. --file is repeatable.
 git-relay send --cwd /project/worktree-A \
-  --agent claude-code --session claude-session-A \
+  --agent codex --session codex-session-A \
   --file src/config.ts --file src/types.ts \
   --message 'The interfaces in these files changed. Assess whether your task needs adaptation.'
 ```
@@ -115,7 +118,7 @@ git-relay check --cwd /project/worktree-B --agent codex --session codex-session-
 git-relay watch --cwd /project/worktree-B --agent codex --session codex-session-B
 ```
 
-Use the host's adapter name and stable session ID. For pi/OpenCode, also pass the exact `--instance` from `git-relay sessions`; omitting it selects a separate legacy inbox. The default CLI adapter is `cli`; omitting `--agent` creates an independent CLI consumer rather than using a native agent's identity.
+Use the host's adapter name and stable session ID. For OpenCode, also pass the exact `--instance` from `git-relay sessions`; omitting it selects a separate legacy inbox. The default CLI adapter is `cli`; omitting `--agent` creates an independent CLI consumer rather than using a native agent's identity.
 
 CLI output is NDJSON: `worktree.upstream-change` for upstream changes and `worktree.agent-message` for explicit messages. A check can output multiple lines; empty stdout means no delivery this time.
 
@@ -143,7 +146,7 @@ before retrying; the result may otherwise be duplicated. Existing receipts are
 filtered before this check and not revoked; events already collected cannot be
 reconstructed by this check.
 
-pi acknowledges only after the message appears in session history, not merely after follow-up queueing. Other adapters acknowledge successful host calls or completed hook/CLI output. A host crash before reading hook output may still lose model-level delivery; this is not exactly-once processing.
+OpenCode acknowledges durable host queue admission; Codex acknowledges completed hook output. A host crash before reading hook output may still lose model-level delivery; this is not exactly-once processing.
 
 A check selects at most eight events and targets roughly 64K characters. A single larger event can occupy a batch to allow progress. Unsent events remain for the next check. By default, `consumeMailbox` sends the selected events as one batch; a failed or cancelled delivery does not acknowledge that batch. With `deliverIndividually: true`, it sends and acknowledges each notification separately. CLI `check`/`watch` and the compatibility API `consumeChanges` use individual delivery, so a later output failure retains earlier successful receipts. In either mode, interruption after a successful callback but before its receipt is written can cause redelivery.
 
@@ -173,18 +176,17 @@ await consumeMailbox({
 
 `joinSession` and `leaveSession` likewise capture their identity, working directory, ref, and signal when called; `leaveSession` also captures `repositoryId`. As a result, ref and signal getters can run earlier than in older versions, including before repository lookup or missing-worktree discovery.
 
-`isDelivered(eventId)` lets hosts with durable history confirm previous acceptance on retry. A pending pi delivery proof blocks ordinary CLI `check`/`watch` and `consumeChanges` from acknowledging that event: successful CLI output alone is not proof that pi accepted it. Existing manual consumption without a pending pi proof remains available. The native adapter's verification callbacks are a trusted integration contract, not protection against a malicious SDK caller. `consumeChanges({ deliver })` remains an upstream-only compatibility API and does not acknowledge explicit messages. Its session can still be a recipient of broadcasts, so those messages remain unread and cannot be collected while it only uses `consumeChanges`. To process them, use `consumeMailbox` or the matching `check` identity; leaving alone preserves the unread messages. This also lets an existing session switch to the full mailbox without losing messages sent before the switch.
+`isDelivered(eventId)` lets hosts with durable history confirm previous acceptance on retry. A pending legacy delivery proof blocks ordinary CLI `check`/`watch` and `consumeChanges` from acknowledging that event: successful CLI output alone is not proof that the retired client accepted it. Existing manual consumption without a pending legacy proof remains available. The native adapter's verification callbacks are a trusted integration contract, not protection against a malicious SDK caller. `consumeChanges({ deliver })` remains an upstream-only compatibility API and does not acknowledge explicit messages. Its session can still be a recipient of broadcasts, so those messages remain unread and cannot be collected while it only uses `consumeChanges`. To process them, use `consumeMailbox` or the matching `check` identity; leaving alone preserves the unread messages. This also lets an existing session switch to the full mailbox without losing messages sent before the switch.
 
 ## Legacy state migration and maintenance
 
 - Older shared state used only the common-directory path for its repository key. It is not silently claimed by a new identity. Use the explicit [migration procedure](migration.md#repository-identity-and-existing-state), or choose fresh state while retaining the old directory. The old state may already contain data from multiple repositories previously recreated at the same path; inspect its provenance before claiming it.
 - Legacy `<git-common-dir>/worktree-agent-sync/<key>.json` cursors are imported read-only into session-specific catch-up events. Source files are not deleted or overwritten.
-- pi imports positions from old `worktree-watch-state` entries and change messages. New receipts use native session IDs and do not roll back with tree navigation in the same session.
 - Upgrades do not delete or close old subscriptions. Old send-only identities or `parent-session/agent_id` subagent identities may have left stale registrations. Inspect `sessions` first. Explicit `leave` prevents future delivery while retaining unread events. To acknowledge old messages, pause other publishers/receivers, repeatedly `check` with the matching `--cwd`, `--agent`, and `--session`, review output until empty, then `leave` and use normal GC. Closed identities need `join` first. Do not automatically retire genuinely offline sessions.
 - A killed process may leave a `.lock`. Confirm the owner has exited before removing only that lock, never its events or receipts. Locks possibly held by live processes are not stolen.
 - `leave` stops future subscriptions; `join` resumes them. Leaving does not acknowledge messages. `gc` previews by default and only collects fully acknowledged events past retention. The optional daemon attempts GC when discovering a repository and hourly after a successful pass; failed or busy passes are retried. There is no offline TTL; `lastSeen` is diagnostic. See [maintenance](maintenance.md).
 - Inbox scanning reads retained event and session receipt filenames, validates receipts first, and loads only unacknowledged event bodies, with up to 32 concurrent reads per batch. Recognizable upstream publication chains and migration predecessors are delivered in causal order; an unconfirmed upstream event holds its successors. Independent messages rotate through a durable scheduling cursor to avoid starvation. See [maintenance](maintenance.md#upstream-publication-recovery-and-upgrades) for historical-event and failure boundaries. Corrupt receipts fail rather than count as read. A consume that acquires the locks and proceeds for an active session synchronizes its ref and separately validates all retained events and trash, including events that the session has already confirmed; GC also validates all events. A Git or state read failure stops that consume, including delivery of unrelated messages, until it can be retried. Safe periodic cleanup reduces scanning. Before clearing state, stop the daemon and all participants and back it up; clearing loses pending messages and deduplication records.
-- Shared storage does not bypass host delivery limits. Claude Code/Codex/Cursor hooks cannot wake an already idle session; pi/OpenCode polling can. Local cancellation cannot retract a request already accepted by a remote host.
+- Shared storage does not bypass host delivery limits. Codex hooks cannot wake an already idle session; OpenCode polling can. Local cancellation cannot retract a request already accepted by a remote host.
 
 Git paths and refs used for repository identity, file relevance and branch
 operations must be valid UTF-8. If Git returns an unrepresentable path or ref,

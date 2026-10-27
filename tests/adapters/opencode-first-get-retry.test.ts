@@ -40,8 +40,8 @@ async function fixture(t: TestContext, get: (input: { sessionID: string }) => Pr
   execFileSync('git', ['-C', repo, 'symbolic-ref', 'HEAD', 'refs/heads/main'], { stdio: 'ignore', timeout: 5000 });
   execFileSync('git', ['-C', repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'initial'], { stdio: 'ignore', timeout: 5000 });
   const root = await realpath(repo);
-  let tick: (() => void) | undefined, hook!: (event: { sessionID: string }) => Promise<void>;
-  let wake: (() => void) | undefined, stopped = false;
+  let tick: (() => void) | undefined, hook!: (event: { sessionID: string; prompt?: { text: string } }) => Promise<void>;
+  let wake: (() => void) | undefined;
   const queue: PendingEvent[] = [];
   t.mock.method(globalThis, 'setInterval', ((fn: () => void) => { tick = fn; return { unref() {} } as unknown as NodeJS.Timeout; }) as typeof setInterval);
   t.mock.method(globalThis, 'clearInterval', (() => { tick = undefined; }) as typeof clearInterval);
@@ -55,6 +55,7 @@ async function fixture(t: TestContext, get: (input: { sessionID: string }) => Pr
       async prompt() { throw new Error('Unexpected host prompt'); },
     },
     event: { async *subscribe({ signal }: { signal: AbortSignal }) {
+      let stopped = signal.aborted;
       signal.addEventListener('abort', () => { stopped = true; wake?.(); }, { once: true });
       while (!stopped) {
         if (!queue.length) await new Promise<void>((resolve) => { wake = resolve; });
@@ -68,7 +69,7 @@ async function fixture(t: TestContext, get: (input: { sessionID: string }) => Pr
   };
   close = await plugin.setup(context as unknown as Plugin.Context);
   return {
-    dir, root, warnings, prompt: (id: string) => deadline(hook({ sessionID: id })),
+    dir, root, warnings, prompt: (id: string) => deadline(hook({ sessionID: id, prompt: { text: "Enable GitRelay" } })),
     tick: () => tick?.(), hasTimer: () => Boolean(tick),
     deleted: (id: string) => deadline(new Promise<void>((done) => { queue.push({ event: { type: 'session.deleted', data: { sessionID: id } }, done }); wake?.(); })),
   };
@@ -120,10 +121,10 @@ test('OpenCode bounds retained retry candidates and unfinished host calls', { sk
     started++; const pending = Promise.withResolvers<Session>(); held.set(sessionID, pending); return pending.promise;
   });
   for (let n = 0; n < 129; n++) await f.prompt(`id-${n}`);
-  assert.ok(f.warnings.some((message) => message.includes('Too many pending OpenCode session lookups')));
+  assert.ok(f.warnings.some((message) => message.includes('Too many pending')));
   for (let n = 0; n < 16; n++) { const before = started; f.tick(); await pause(); assert.equal(started - before, 8); }
-  assert.equal(started, 128); assert.equal(counts.get('id-128'), 1);
-  held.get('id-0')!.resolve({ location: { directory: '/elsewhere' } }); await pause(); f.tick(); await pause(); assert.equal(counts.get('id-128'), 1);
+  assert.equal(started, 128); assert.equal(counts.get('id-128'), undefined);
+  held.get('id-0')!.resolve({ location: { directory: '/elsewhere' } }); await pause(); f.tick(); await pause(); assert.equal(counts.get('id-128'), undefined);
   for (let n = 0; n < 128; n++) await f.deleted(`id-${n}`);
   await f.prompt('new-id'); f.tick(); await pause(); assert.equal(started, 129);
   await f.deleted('new-id'); await f.prompt('another-id'); f.tick(); await pause(); assert.equal(started, 129);

@@ -37,13 +37,13 @@ test("version detection rejects distinct version candidates", { skip: process.pl
 test("version detection rejects npm-incompatible length and numeric ranges", { skip: process.platform === "win32" }, async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "git-relay-version-range-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  for (const name of ["opencode", "codex", "pi"]) {
+  for (const name of ["opencode", "codex"]) {
     const command = join(dir, name);
     await writeFile(command, "#!/bin/sh\nprintf '%s\\n' \"$VERSION_TEXT\"\n");
     await chmod(command, 0o755);
   }
-  const detect = (platform: "opencode" | "codex" | "pi", version: string) => detectPlatform(platform, { PATH: dir, VERSION_TEXT: version });
-  for (const platform of ["opencode", "codex", "pi"] as const) {
+  const detect = (platform: "opencode" | "codex", version: string) => detectPlatform(platform, { PATH: dir, VERSION_TEXT: version });
+  for (const platform of ["opencode", "codex"] as const) {
     for (const version of ["9007199254740992.1.2", "2.9007199254740992.0", "2.1.9007199254740992", `2.1.2+${"x".repeat(251)}`]) {
       assert.equal((await detect(platform, version)).status, "unavailable", `${platform}: ${version}`);
     }
@@ -55,9 +55,6 @@ test("version detection rejects npm-incompatible length and numeric ranges", { s
   assert.equal((await detect("opencode", "2.1.2-rc.1+build-123")).status, "unverified");
   assert.equal((await detect("opencode", "2.1.2")).status, "installed");
   assert.equal((await detect("codex", "0.164.0")).status, "installed");
-  assert.equal((await detect("pi", "1.4.0")).status, "installed");
-  assert.equal((await detect("pi", "0.78.0")).status, "incompatible");
-  assert.equal((await detect("pi", "0.78.1")).status, "unverified");
 });
 
 test("version detection still responds to cancellation", { skip: process.platform === "win32" }, async (t) => {

@@ -61,7 +61,7 @@ test("one daemon discovers multiple repositories and isolates a failing subscrip
   const clone = join(f.root, "clone");
   git(f.root, "clone", f.main, clone);
   await consumeMailbox({ cwd: f.b, ref: "refs/heads/main", adapter: "codex", session: "B", async deliver() {} });
-  await consumeMailbox({ cwd: clone, ref: "refs/heads/main", adapter: "pi", session: "clone", async deliver() {} });
+  await consumeMailbox({ cwd: clone, ref: "refs/heads/main", adapter: "codex", session: "clone", async deliver() {} });
   // A legacy/corrupt subscription must remain isolated; send no longer creates subscriptions.
   await registerSession(await repository(f.a), { adapter: "cc", session: "bad-ref" }, "refs/heads/missing");
   const a = await repository(f.b);

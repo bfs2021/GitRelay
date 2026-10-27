@@ -1,125 +1,131 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { hookResponse, runHook, type HookAgent } from "../../src/adapters/hooks.ts";
-import { fixture } from "../helpers.ts";
+import { hookResponse, runHook } from "../../src/adapters/hooks.ts";
+import { sessionActivation } from "../../src/core/activation.ts";
 import { consumeMailbox } from "../../src/core/consumer.ts";
-import { collectGarbage } from "../../src/core/cleanup.ts";
-import { listSessions, sendMessage } from "../../src/core/mailbox.ts";
+import { listSessions, readReceipt, sendMessage, sessionKey } from "../../src/core/mailbox.ts";
+import { repository, withLock } from "../../src/core/store.ts";
+import { setTimeout as delay } from "node:timers/promises";
+import { fixture } from "../helpers.ts";
 
-test("protocols return model context or continuation rather than a human notification", () => {
-  for (const agent of ["claude-code", "codex"] as const) {
-    assert.deepEqual(hookResponse(agent, "PostToolUse", "diff"), { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "diff" } });
-    assert.deepEqual(hookResponse(agent, "Stop", "diff"), { decision: "block", reason: "diff" });
-  }
-  assert.deepEqual(hookResponse("cursor", "postToolUse", "diff"), { additional_context: "diff" });
-  assert.deepEqual(hookResponse("cursor", "stop", "diff"), { followup_message: "diff" });
+const ref = "refs/heads/main";
+const input = (cwd: string, session = "receiver") => ({ hook_event_name: "UserPromptSubmit", session_id: session, cwd });
+
+test("Codex protocol returns model context and Stop continuation", () => {
+  assert.deepEqual(hookResponse("PostToolUse", "diff"), { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "diff" } });
+  assert.deepEqual(hookResponse("Stop", "diff"), { decision: "block", reason: "diff" });
 });
 
-test("multiple shared messages produce one valid hook response", async (t) => {
-  const f = await fixture(t);
-  const input = { hook_event_name: "SessionStart", session_id: "B", cwd: f.b };
-  const responses: object[] = [];
-  const output = async (value: object) => { responses.push(value); };
-  await runHook("codex", input, "refs/heads/main", output);
-  responses.length = 0;
-  await sendMessage({ cwd: f.a, adapter: "opencode", session: "A", text: "first shared note" });
-  await sendMessage({ cwd: f.a, adapter: "claude-code", session: "C", text: "second shared note" });
-  await runHook("codex", { ...input, hook_event_name: "PostToolUse" }, "refs/heads/main", output);
-  assert.equal(responses.length, 1);
-  assert.match(JSON.stringify(responses[0]), /first shared note/);
-  assert.match(JSON.stringify(responses[0]), /second shared note/);
-  assert.match(JSON.stringify(responses[0]), /systemMessage/);
-});
-
-test("Codex shows optional branch status in UI and context without blocking Stop or subagents", async (t) => {
-  const f = await fixture(t);
-  const responses: object[] = [];
-  const output = async (value: object) => { responses.push(value); };
-  const input = { hook_event_name: "SessionStart", cwd: f.b, session_id: "codex-visible" };
-  await runHook("codex", input, "refs/heads/main", output, undefined, true);
-  const response = responses.pop() as { systemMessage: string; decision?: string; hookSpecificOutput: { additionalContext: string } };
-  assert.match(response.systemMessage, /feature\/b/);
-  assert.match(response.systemMessage, /Auto-sync.*Off/);
-  assert.match(response.hookSpecificOutput.additionalContext, /not authorization to act/);
-  assert.equal(response.decision, undefined);
-  await runHook("codex", { ...input, hook_event_name: "Stop" }, "refs/heads/main", output, undefined, true);
-  assert.deepEqual(responses.pop(), {});
-  await runHook("codex", { ...input, agent_id: "subagent" }, "refs/heads/main", output, undefined, true);
-  assert.deepEqual(responses.pop(), {});
-  await runHook("claude-code", input, "refs/heads/main", output, undefined, true);
-  assert.deepEqual(responses.pop(), {});
-});
-
-test("subagent tool hooks neither subscribe nor consume the parent's inbox or pin GC", async (t) => {
-  const f = await fixture(t);
-  const parent = { hook_event_name: "SessionStart", session_id: "S", cwd: f.b };
-  const responses: object[] = [];
-  const output = async (value: object) => { responses.push(value); };
-  await runHook("claude-code", parent, "refs/heads/main", output);
-  const consumer = { cwd: f.c, ref: "refs/heads/main", adapter: "codex", session: "C", async deliver() {} };
-  await consumeMailbox(consumer);
-  const event = await sendMessage({ cwd: f.a, adapter: "cli", session: "send-only", text: "for parent" });
-  await runHook("claude-code", { ...parent, hook_event_name: "PostToolUse", agent_id: "sub1" }, "refs/heads/main", output);
-  assert.deepEqual(responses.at(-1), {});
-  assert.deepEqual((await listSessions(f.b)).map((session) => session.session).sort(), ["C", "S"]);
-  await runHook("claude-code", { ...parent, hook_event_name: "PostToolUse" }, "refs/heads/main", output);
-  assert.match(JSON.stringify(responses.at(-1)), /for parent/);
-  await consumeMailbox(consumer);
-  assert.deepEqual((await collectGarbage(f.b, { apply: true, retentionDays: 0 })).removed, [event.id]);
-});
-
-test("Cursor cumulative loop_count does not suppress new unread events", async (t) => {
-  const f = await fixture(t);
-  const input = { hook_event_name: "stop", status: "completed", conversation_id: "chat", cwd: f.b };
-  const responses: object[] = [];
-  const output = async (value: object) => { responses.push(value); };
-  await runHook("cursor", input, "refs/heads/main", output);
-  for (const loop_count of [1, 2]) {
-    await sendMessage({ cwd: f.a, adapter: "cli", session: "sender", text: `new note ${loop_count}` });
-    await runHook("cursor", { ...input, loop_count }, "refs/heads/main", output);
-    assert.match(JSON.stringify(responses.pop()), /followup_message/);
-    await runHook("cursor", { ...input, loop_count }, "refs/heads/main", output);
-    assert.deepEqual(responses.pop(), {});
-  }
-});
-
-test("global hooks in a non-Git directory quietly return an empty protocol response", async (t) => {
-  const f = await fixture(t);
-  for (const agent of ["claude-code", "codex", "cursor"] as const) {
+test("ordinary hooks skip Git, status and subscriptions until the native session opts in", async (t) => {
+  const f = await fixture(t), previousPath = process.env.PATH;
+  process.env.PATH = join(f.root, "missing-bin");
+  t.after(() => { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; });
+  for (const hook_event_name of ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]) {
     const responses: object[] = [];
-    await runHook(agent, { hook_event_name: agent === "cursor" ? "postToolUse" : "SessionStart", session_id: "S", conversation_id: "S", cwd: f.root }, "refs/heads/main", async (value) => { responses.push(value); });
+    await runHook({ ...input(f.b), hook_event_name, prompt: "修复这个 bug" }, ref, async (value) => { responses.push(value); }, undefined, true);
     assert.deepEqual(responses, [{}]);
   }
-  assert.deepEqual(await listSessions(f.b), []);
+  await assert.rejects(access(join(f.root, "state")), { code: "ENOENT" });
 });
 
-for (const agent of ["claude-code", "codex", "cursor"] as HookAgent[]) {
-  test(`${agent} hook establishes baseline, resumes once on update and prevents stop loops`, async (t) => {
-    const f = await fixture(t);
-    await writeFile(join(f.b, "shared.txt"), "local\n");
-    const responses: object[] = [];
-    const input = agent === "cursor"
-      ? { hook_event_name: "postToolUse", conversation_id: "chat", cwd: f.b }
-      : { hook_event_name: "SessionStart", session_id: "chat", cwd: f.b };
-    const output = async (value: object) => { responses.push(value); };
-    await runHook(agent, input, "refs/heads/main", output);
-    assert.deepEqual(responses.pop(), {});
-    await f.commit(f.main, "shared.txt", "upstream\n");
-    const stop = { ...input, hook_event_name: agent === "cursor" ? "stop" : "Stop", status: "completed" };
-    await runHook(agent, stop, "refs/heads/main", output);
-    const response = responses.pop() as Record<string, string>;
-    assert.match(response.reason ?? response.followup_message, /shared.txt/);
-    await runHook(agent, stop, "refs/heads/main", output);
-    assert.deepEqual(responses.pop(), {});
-    await f.commit(f.main, "shared.txt", "another\n");
-    await runHook(agent, { ...stop, stop_hook_active: true }, "refs/heads/main", output);
-    assert.deepEqual(responses.pop(), {});
-    await runHook(agent, { ...input, hook_event_name: agent === "cursor" ? "postToolUse" : "PostToolUse" }, "refs/heads/main", output);
-    assert.ok(JSON.stringify(responses.pop()).includes("another"));
-    await sendMessage({ cwd: f.a, adapter: "opencode", session: "OC-A", text: "Shared message from OpenCode" });
-    await runHook(agent, { ...input, hook_event_name: agent === "cursor" ? "postToolUse" : "PostToolUse" }, "refs/heads/main", output);
-    assert.ok(JSON.stringify(responses.pop()).includes("from OpenCode"));
-  });
-}
+test("a direct prompt enables only its session and later hooks deliver shared messages once", async (t) => {
+  const f = await fixture(t), responses: object[] = [], output = async (value: object) => { responses.push(value); };
+  await runHook({ ...input(f.b), prompt: "请并行开发这个功能" }, ref, output);
+  await sendMessage({ cwd: f.a, adapter: "opencode", session: "sender", text: "first shared note" });
+  await sendMessage({ cwd: f.a, adapter: "cli", session: "sender", text: "second shared note" });
+  await runHook({ ...input(f.b, "other"), hook_event_name: "PostToolUse" }, ref, output);
+  assert.deepEqual(responses.at(-1), {});
+  await runHook({ ...input(f.b), hook_event_name: "PostToolUse" }, ref, output);
+  assert.match(JSON.stringify(responses.at(-1)), /first shared note.*second shared note/s);
+  assert.match(JSON.stringify(responses.at(-1)), /systemMessage/);
+  await runHook({ ...input(f.b), hook_event_name: "SessionStart" }, ref, output);
+  assert.deepEqual(responses.at(-1), {});
+  assert.deepEqual((await listSessions(f.b)).map((session) => session.session), ["receiver"]);
+});
+
+test("disabling closes enrollment and preserves unread messages for an explicit rejoin", async (t) => {
+  const f = await fixture(t), responses: object[] = [], output = async (value: object) => { responses.push(value); };
+  await runHook({ ...input(f.b), prompt: "Enable GitRelay" }, ref, output);
+  const event = await sendMessage({ cwd: f.a, adapter: "opencode", session: "sender", text: "unread before disabling" });
+  await runHook({ ...input(f.b), prompt: "关闭 GitRelay" }, ref, output);
+  await runHook({ ...input(f.b), hook_event_name: "Stop" }, ref, output);
+  assert.deepEqual(responses.at(-1), {});
+  const repo = await repository(f.b), key = sessionKey(repo, { adapter: "codex", session: "receiver" }, ref);
+  assert.equal(await readReceipt(repo, key, event.id), undefined);
+  assert.ok((await listSessions(f.b))[0].closedAt);
+  const skipped = await sendMessage({ cwd: f.a, adapter: "opencode", session: "sender", text: "while disabled" });
+  assert.ok(!skipped.recipients.includes(key));
+  await runHook({ ...input(f.b), prompt: "Enable GitRelay" }, ref, output);
+  assert.match(JSON.stringify(responses.at(-1)), /unread before disabling/);
+  assert.equal((await readReceipt(repo, key, event.id))?.status, "delivered");
+});
+
+test("legacy auto-enrollment alone does not activate hooks or acknowledge an old inbox", async (t) => {
+  const f = await fixture(t), responses: object[] = [];
+  const receiver = { cwd: f.b, ref, adapter: "codex", session: "receiver", async deliver() {} };
+  await consumeMailbox(receiver);
+  const event = await sendMessage({ cwd: f.a, adapter: "opencode", session: "sender", text: "legacy unread" });
+  await runHook({ ...input(f.b), hook_event_name: "SessionStart" }, ref, async (value) => { responses.push(value); }, undefined, true);
+  assert.deepEqual(responses, [{}]);
+  const repo = await repository(f.b), key = sessionKey(repo, receiver, ref);
+  assert.equal(await readReceipt(repo, key, event.id), undefined);
+});
+
+test("status requires activation and Stop never blocks without a new event", async (t) => {
+  const f = await fixture(t), responses: object[] = [], output = async (value: object) => { responses.push(value); };
+  await runHook({ ...input(f.b), prompt: "Enable GitRelay" }, ref, output, undefined, true);
+  assert.match(JSON.stringify(responses.at(-1)), /feature\/b/);
+  assert.match(JSON.stringify(responses.at(-1)), /not authorization to act/);
+  await runHook({ ...input(f.b), hook_event_name: "Stop" }, ref, output, undefined, true);
+  assert.deepEqual(responses.at(-1), {});
+  await writeFile(join(f.b, "shared.txt"), "local\n");
+  await f.commit(f.main, "shared.txt", "upstream\n");
+  await runHook({ ...input(f.b), hook_event_name: "Stop", stop_hook_active: true }, ref, output);
+  assert.deepEqual(responses.at(-1), {});
+  await runHook({ ...input(f.b), hook_event_name: "Stop" }, ref, output);
+  assert.match(JSON.stringify(responses.at(-1)), /"decision":"block"/);
+  await runHook({ ...input(f.b), hook_event_name: "Stop" }, ref, output);
+  assert.deepEqual(responses.at(-1), {});
+});
+
+test("subagents and tool payloads cannot activate a session", async (t) => {
+  const f = await fixture(t), output = async (value: object) => assert.deepEqual(value, {});
+  await runHook({ ...input(f.b), prompt: "Enable GitRelay", agent_id: "subagent" }, ref, output);
+  await runHook({ ...input(f.b), hook_event_name: "PostToolUse", prompt: "Enable GitRelay" }, ref, output);
+  assert.equal(await sessionActivation({ cwd: f.b, ref, adapter: "codex", session: "receiver" }), false);
+  await assert.rejects(access(join(f.root, "state")), { code: "ENOENT" });
+});
+
+test("a later disable wins while an earlier hook is still joining", async (t) => {
+  const f = await fixture(t), output = async (_value: object) => {};
+  const options = { cwd: f.b, ref, adapter: "codex", session: "receiver" };
+  await runHook({ ...input(f.b), prompt: "Enable GitRelay" }, ref, output);
+  await runHook({ ...input(f.b), prompt: "Disable GitRelay" }, ref, output);
+  const repo = await repository(f.b), key = sessionKey(repo, options, ref);
+  const held = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const locked = withLock(join(repo.directory, "publish.lock"), async () => { held.resolve(); await release.promise; });
+  await held.promise;
+  const joining = runHook({ ...input(f.b), prompt: "Enable GitRelay" }, ref, output);
+  let leaving: Promise<void> | undefined;
+  const waitForChoice = async (enabled: boolean) => {
+    const deadline = Date.now() + 3000;
+    while (await sessionActivation(options) !== enabled) { assert.ok(Date.now() < deadline, "activation did not change"); await delay(10); }
+  };
+  try {
+    await waitForChoice(true);
+    const deadline = Date.now() + 3000;
+    while (!await access(join(repo.directory, "sessions", `${key}.lock`)).then(() => true, () => false)) {
+      assert.ok(Date.now() < deadline, "the joining hook did not acquire its session lock");
+      await delay(10);
+    }
+    leaving = assert.rejects(runHook({ ...input(f.b), prompt: "Disable GitRelay" }, ref, output), /busy/);
+    await waitForChoice(false);
+  } finally {
+    release.resolve();
+    await Promise.all([locked, joining, leaving]);
+  }
+  assert.equal(await sessionActivation(options), false);
+  assert.ok((await listSessions(f.b))[0].closedAt);
+});

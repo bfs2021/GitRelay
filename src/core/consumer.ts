@@ -89,6 +89,7 @@ async function consumeMailboxInternal(options: MailboxOptions, individually: boo
       const notifications: Notification[] = [];
       let overlaps: ((file: string) => boolean) | undefined;
       let piProofs: Set<string> | undefined;
+      // Retain the legacy proof guard so removing an adapter cannot acknowledge an unknown delivery.
       const hasPiProof = async (id: string): Promise<boolean> => {
         if (adapter !== "pi") return false;
         if (!piProofs) {

@@ -9,18 +9,23 @@ import { setTimeout as delay } from "node:timers/promises";
 import { test, type TestContext } from "node:test";
 import type { Plugin } from "@opencode/plugin";
 import plugin from "../../src/adapters/opencode/index.ts";
+import { listSessions, sendMessage } from "../../src/core/mailbox.ts";
 import { sessionKey } from "../../src/core/mailbox.ts";
 import { hash } from "../../src/core/store.ts";
 
 async function fixture(t: TestContext) {
   const dir = await mkdtemp(join(tmpdir(), "opencode-recovery-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
   const repo = join(dir, "repo"), template = join(dir, "template"), state = join(dir, "state");
   await mkdir(repo); await mkdir(template);
   const previous = process.env.WORKTREE_SYNC_STATE_DIR;
   process.env.WORKTREE_SYNC_STATE_DIR = state;
-  t.after(() => { if (previous === undefined) delete process.env.WORKTREE_SYNC_STATE_DIR; else process.env.WORKTREE_SYNC_STATE_DIR = previous; });
-  return { dir, repo: await realpath(repo), template, state };
+  let cleanup = async () => {};
+  t.after(async () => {
+    try { await cleanup(); }
+    finally { if (previous === undefined) delete process.env.WORKTREE_SYNC_STATE_DIR; else process.env.WORKTREE_SYNC_STATE_DIR = previous; }
+    await rm(dir, { recursive: true, force: true });
+  });
+  return { dir, repo: await realpath(repo), template, state, setCleanup(close: () => Promise<void>) { cleanup = close; } };
 }
 function init(repo: string, template: string, git: string) {
   execFileSync(git, ["init", "--template", template, "-b", "main", repo], { stdio: "ignore" });
@@ -32,7 +37,7 @@ async function until(check: () => Promise<boolean>) {
   throw new Error("OpenCode recovery timed out");
 }
 function host(root: string) {
-  let onPrompt!: (event: { sessionID: string }) => Promise<void>;
+  let onPrompt!: (event: { sessionID: string; prompt?: { text: string } }) => Promise<void>;
   const prompts: Array<{ text?: string }> = [];
   const ctx = {
     location: { directory: root },
@@ -43,7 +48,7 @@ function host(root: string) {
     },
     event: { async *subscribe({ signal }: { signal: AbortSignal }) { await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true })); } },
   };
-  return { context: ctx as unknown as Plugin.Context, prompt: (id: string) => onPrompt({ sessionID: id }), prompts };
+  return { context: ctx as unknown as Plugin.Context, prompt: (id: string, text = "Enable GitRelay") => onPrompt({ sessionID: id, prompt: { text } }), prompts };
 }
 
 test("OpenCode resumes a registered inbox after temporary Git initialization failure", { skip: process.platform === "win32" }, async (t) => {
@@ -67,7 +72,7 @@ test("OpenCode resumes a registered inbox after temporary Git initialization fai
   });
   const warnings: string[] = []; t.mock.method(console, "warn", (message: string) => { warnings.push(message); });
   t.mock.timers.enable({ apis: ["setInterval"] }); let monotonic = performance.now(); t.mock.method(performance, "now", () => monotonic);
-  const h = host(f.repo), cleanup = await plugin.setup(h.context); t.after(cleanup);
+  const h = host(f.repo), cleanup = await plugin.setup(h.context); f.setCleanup(cleanup);
   await h.prompt("receiver"); assert.equal(h.prompts.length, 0); assert.equal(warnings.length, 1);
   await writeFile(mode, "ok"); monotonic += 5000; t.mock.timers.tick(5000);
   await until(async () => h.prompts.length === 1);
@@ -79,7 +84,7 @@ test("OpenCode registers after a non-Git directory becomes a repository", { skip
   const f = await fixture(t), git = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8" }).trim(), warnings: string[] = [];
   t.mock.method(console, "warn", (message: string) => { warnings.push(message); });
   t.mock.timers.enable({ apis: ["setInterval"] }); let monotonic = performance.now(); t.mock.method(performance, "now", () => monotonic);
-  const h = host(f.repo), cleanup = await plugin.setup(h.context); t.after(cleanup);
+  const h = host(f.repo), cleanup = await plugin.setup(h.context); f.setCleanup(cleanup);
   await h.prompt("new"); assert.equal(warnings.length, 1);
   init(f.repo, f.template, git); monotonic += 5000; t.mock.timers.tick(5000);
   const common = await realpath(join(f.repo, ".git")), key = sessionKey({ root: f.repo }, { adapter: "opencode", session: "new", instance: hash([resolve(process.env.XDG_DATA_HOME || homedir()), 1]) }, "refs/heads/main");
@@ -90,4 +95,24 @@ test("OpenCode registers after a non-Git directory becomes a repository", { skip
     } catch { return false; }
   });
   assert.equal(h.prompts.length, 0);
+});
+
+test("OpenCode resumes activation after plugin reload without enabling another conversation", async (t) => {
+  const f = await fixture(t), git = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  init(f.repo, f.template, git);
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const first = host(f.repo), closeFirst = await plugin.setup(first.context);
+  f.setCleanup(closeFirst);
+  await first.prompt("receiver");
+  await closeFirst();
+  const second = host(f.repo), closeSecond = await plugin.setup(second.context);
+  f.setCleanup(closeSecond);
+  await second.prompt("other", "Fix this bug");
+  await second.prompt("receiver", "Continue the existing task");
+  const event = await sendMessage({ cwd: f.repo, adapter: "codex", session: "sender", text: "RESUMED_ACTIVATION" });
+  const sessions = await listSessions(f.repo);
+  assert.deepEqual(sessions.map((session) => session.session), ["receiver"]);
+  assert.ok(event.recipients.length);
+  t.mock.timers.tick(5000);
+  await until(async () => second.prompts.some((prompt) => prompt.text?.includes("RESUMED_ACTIVATION") === true));
 });

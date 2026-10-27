@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { runHook } from "../../src/adapters/hooks.ts";
+import { runEnabledHook as runHook } from "../enabled-hook.ts";
 import { fixture } from "../helpers.ts";
 
 const exec = promisify(execFile);
@@ -18,10 +18,10 @@ test("missing Git is reported without acknowledging hook messages", async (t) =>
   const before = process.env.PATH;
   process.env.PATH = root;
   t.after(() => { if (before === undefined) delete process.env.PATH; else process.env.PATH = before; });
-  for (const agent of ["claude-code", "codex", "cursor"] as const) {
+  for (const agent of ["codex"] as const) {
     const responses: object[] = [];
-    const input = { hook_event_name: agent === "cursor" ? "postToolUse" : "SessionStart", session_id: "S", conversation_id: "S", cwd: root };
-    await assert.rejects(runHook(agent, input, ref, async (value) => { responses.push(value); }), (error: unknown) => (error as Error & { cause?: NodeJS.ErrnoException }).cause?.code === "ENOENT");
+    const input = { hook_event_name: "SessionStart", session_id: "S", conversation_id: "S", cwd: root };
+    await assert.rejects(runHook(input, ref, async (value) => { responses.push(value); }), (error: unknown) => (error as Error & { cause?: NodeJS.ErrnoException }).cause?.code === "ENOENT");
     assert.deepEqual(responses, []);
   }
 });
@@ -35,10 +35,10 @@ test("an unexecutable or signalled Git process is reported", { skip: process.pla
   const git = join(root, "git"), input = { hook_event_name: "SessionStart", session_id: "S", cwd: root };
   await writeFile(git, "#!/bin/sh\nexit 0\n");
   await chmod(git, 0o644);
-  await assert.rejects(runHook("codex", input, ref, async () => assert.fail("unexpected hook response")), (error: unknown) => (error as Error & { cause?: NodeJS.ErrnoException }).cause?.code === "EACCES");
+  await assert.rejects(runHook(input, ref, async () => assert.fail("unexpected hook response")), (error: unknown) => (error as Error & { cause?: NodeJS.ErrnoException }).cause?.code === "EACCES");
   await writeFile(git, "#!/bin/sh\nkill -TERM $$\n");
   await chmod(git, 0o755);
-  await assert.rejects(runHook("codex", input, ref, async () => assert.fail("unexpected hook response")), (error: unknown) => (error as Error & { cause?: { signal?: string } }).cause?.signal === "SIGTERM");
+  await assert.rejects(runHook(input, ref, async () => assert.fail("unexpected hook response")), (error: unknown) => (error as Error & { cause?: { signal?: string } }).cause?.signal === "SIGTERM");
 });
 
 test("cancelling a running Git probe propagates the abort", { skip: process.platform === "win32" }, async (t) => {
@@ -56,7 +56,7 @@ test("cancelling a running Git probe propagates the abort", { skip: process.plat
   await writeFile(git, "#!/bin/sh\nprintf '%s' \"$$\" > \"$GIT_RELAY_TEST_PID.tmp\"\n/bin/mv \"$GIT_RELAY_TEST_PID.tmp\" \"$GIT_RELAY_TEST_PID\"\nexec /bin/sleep 30\n");
   await chmod(git, 0o755);
   const abort = new AbortController(), reason = new Error("cancelled Git probe");
-  const pending = runHook("codex", { hook_event_name: "SessionStart", session_id: "S", cwd: root }, ref, async () => assert.fail("unexpected hook response"), abort.signal);
+  const pending = runHook({ hook_event_name: "SessionStart", session_id: "S", cwd: root }, ref, async () => assert.fail("unexpected hook response"), abort.signal);
   void pending.catch(() => {});
   t.after(() => abort.abort(reason));
   const deadline = Date.now() + 3000;
@@ -90,7 +90,7 @@ test("explicit Git environment still resolves an existing worktree", async (t) =
     }
   });
   const responses: object[] = [];
-  await runHook("codex", { hook_event_name: "SessionStart", session_id: "S", cwd: f.root }, ref, async (value) => { responses.push(value); });
+  await runHook({ hook_event_name: "SessionStart", session_id: "S", cwd: f.root }, ref, async (value) => { responses.push(value); });
   assert.deepEqual(responses, [{}]);
 });
 
@@ -98,7 +98,7 @@ test("CLI hook reports missing Git as a nonzero diagnostic", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "gitrelay-hook-diagnostic-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const bin = join(root, "empty-bin"); await mkdir(bin);
-  const input = { hook_event_name: "SessionStart", session_id: "S", cwd: root };
+  const input = { hook_event_name: "UserPromptSubmit", prompt: "Enable GitRelay", session_id: "S", cwd: root };
   const env: NodeJS.ProcessEnv = { HOME: root, PATH: bin, TMPDIR: root };
   if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
   const child = exec(process.execPath, ["dist/cli/main.js", "hook", "codex"], { cwd: process.cwd(), env, timeout: 5000 });

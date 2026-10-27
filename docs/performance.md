@@ -1,5 +1,9 @@
 # GitRelay performance benchmarks
 
+These are historical measurements of the named source snapshots. The current
+Codex/OpenCode-only, default-off refactor has not been benchmarked on real hosts.
+Retired-client results are not current support claims.
+
 ## Per-ref daemon cache ownership (2026-10-27, Asia/Singapore)
 
 This is a historical measurement of the cache fast path; current consumers
@@ -333,32 +337,6 @@ The script also exercises zero-retention deletion racing with eight-message reco
 
 The measured 1–8-process scenarios give no reason to relax receipt validation or recipient/publication locks. They do not establish behavior for hundreds of concurrent clients, slow disks, other operating systems, or cold caches. Registry-size measurements in the preceding section remain distinct from this process-concurrency test.
 
-## Pi native-history acknowledgement (2026-10-27, Asia/Singapore)
-
-```sh
-npm run build
-node scripts/benchmark-pi-history.mjs
-```
-
-The historical fixture used the installed pi `1.4.0` SDK's real in-memory `SessionManager`, with 1,000 or 10,000 native history entries and 1,000 already accepted relay messages whose local receipts had to be reconstructed. It was an adapter/core benchmark, not a live interactive pi acceptance test. Each sample removed only its own temporary receipts, timed one watcher tick, and checked that every receipt was recreated without queueing a duplicate or reporting warnings. Three samples formed each median. Setup and SDK import were excluded. The reproduction script now uses a persistent session file for the later durability check below, so its current results are not directly comparable to this historical in-memory dataset.
-
-| Native entries | Before 1, ms | Before 2, ms | After 1, ms | After 2, ms |
-| ---: | ---: | ---: | ---: | ---: |
-| 1,000 | 1,176.3 | 263.0 | 242.9 | 230.9 |
-| 10,000 | 473.1 | 633.3 | 231.0 | 226.5 |
-
-The small baseline varied substantially; it does not support a stable percentage claim. For the 10,000-entry case, the measured range fell from 473–633 ms to 227–231 ms. More directly, instrumentation of the actual SDK method confirmed that each 1,000-event scan went from 1,000 full `getBranch()` traversals to one in every optimized sample.
-
-Within a single watcher check, native event IDs are reused only while both session ID and leaf ID remain unchanged. Both are checked for every acknowledgement lookup, so a native append or branch switch invalidates the set immediately. The set is discarded between checks. Queued follow-ups still require native acceptance before writing receipts; delivery and retry semantics are unchanged. Regression coverage uses the real SDK to append an acceptance during a scan and then rewind the native branch. Existing queued-message, cancellation, and duplicate tests remain in place. `npm run typecheck` and all 127 tests passed.
-
-### Persistent session confirmation
-
-The watcher now checks the native JSONL file and its parent chain before treating a pi message as durable. It reads the file line by line and caches only parent/type metadata and GitRelay message payloads while the file identity, size, nanosecond modification and change times remain unchanged. A native message present only in memory is skipped without a receipt; a persisted session with a missing or corrupt branch is paused with a recovery warning. This protects unread events when pi updates its in-memory branch but writing the native file fails. A changed or truncated file is revalidated; this does not guarantee storage hardware has flushed bytes to stable media.
-
-The current `benchmark-pi-history.mjs` creates actual pi session files with 1,000 or 10,000 history entries and reconstructs 1,000 receipts in three ticks. The first tick includes reading the changed session file; later ticks reuse the validated snapshot. It records the file size and the first and median elapsed times, and verifies all receipts and absence of duplicate queue entries. The comparison used the `watch.ts` from commit `c35de21` as the baseline in an otherwise identical temporary build with the current shared consumer; the modified watcher was measured in a second temporary build. In two alternating local runs on macOS arm64 with Node `22.23.2` and pi `1.4.0`, the 1,000-entry files were about 280 KB and the 10,000-entry files about 1.52 MB. First-tick times before confirmation were 215–217 ms and 225–283 ms respectively; after confirmation they were 225–234 ms and 241–243 ms. Concurrent system activity and the small sample count make this insufficient to claim a stable overhead. All samples passed their assertions. After validating a stored entry, the watcher also makes one synchronous metadata check immediately before confirming it; five local warm-cache loops of 1,000 `statSync` calls took 1.77–2.81 ms in total, excluding receipt writes. This is not a latency bound for a network filesystem.
-
-`node --expose-gc scripts/benchmark-pi-large-history.mjs` creates a separate session with forty 1 MiB unrelated entries, measures a first watcher tick and reports file size, CPU and process memory. In two alternating runs with the same setup and baseline build, its 41.95 MB file took 49–76 ms before confirmation and 109–114 ms afterward; peak RSS grew by about 11.8 MiB in the modified process versus no additional recorded peak in the baseline. Those are single-process warm-cache measurements, not a guarantee for network filesystems or arbitrary history sizes. The new read is a deliberate reliability cost; the file must be reread after each change.
-
 ## Large ignored file trees (2026-10-27, Asia/Singapore)
 
 `scripts/benchmark-worktree.mjs` now additionally creates 1,000, 10,000, then 100,000 ignored files across directories of 100 files each. After one warm-up, it measures five worktree scans plus matcher construction, asserting the complete filename set, a matching file, file/directory prefix overlap, and rejection of a nonexistent sibling. Setup and assertions are excluded from timing; temporary files are removed afterward.
@@ -472,7 +450,7 @@ Two isolated source snapshots, before and after the identity change, ran `script
 
 The CLI delivery benchmark was repeated after the later `writeJson` ownership and receipt-commit changes, again in old/new/new/old/old/new order. All six runs passed delivery, receipt and deduplication checks. Three-run median ranges were 51.5–58.7 ms before and 59.7–63.5 ms after for send, 69.4–80.2 and 79.5–90.8 ms for check, and 121.4–141.4 and 139.6–156.2 ms from send start through check completion. Both snapshots include other code differences; warm caches, concurrent load and three runs per side do not establish a stable percentage or isolate the cause. Evidence: `/tmp/gitrelay-writejson-benchmark.py` and `$TMPDIR/gitrelay-writejson-bench-bw8r1883/summary.json`.
 
-### Pending pi proof guard
+### Legacy delivery-proof guard
 
 This is a historical snapshot of the proof guard alone, not a measurement of the current complete code. An isolated comparison of the pi native-history benchmark changed only the consumer proof guard, alternating old/new/new/old/old/new. All six runs passed their checks for 1,000 recovered receipts and no repeat delivery. Three-run median ranges for 1,000 history entries were 312.9–404.3 ms before and 312.0–375.1 ms after; for 10,000 entries they were 299.9–318.8 ms and 306.3–356.0 ms. Warm caches, concurrent load and three runs per side do not establish a stable percentage. The measured snapshot predates the additional synchronous confirmation-callback validation. Evidence: `/tmp/gitrelay-pi-guard-bench.ud28iO/summary.json`.
 
@@ -580,7 +558,7 @@ Tests retained state and intercepted only Node
 filesystem operations were not intercepted. No real daemon, GC or client ran.
 Evidence: `/tmp/gitrelay-cache-compare.9P3gxJwW/bench.mjs` and
 `/tmp/gitrelay-cache-compare.9P3gxJwW/README.md`. See
-[acceptance](acceptance.md#daemon-cache-and-a-pending-publication-after-ref-rollback-2026-10-27-asiasingapore)
+[acceptance](acceptance.md#historical-evidence)
 for the recovery scenario.
 
 ## Watch stderr queue (2026-10-27, Asia/Singapore)
@@ -645,13 +623,3 @@ with batches; the process RSS before synchronization was approximately
 establish a stable memory difference or worst case: parsing, buffers and event
 objects can coexist, and four 2 MiB records can consume substantially more
 than their file sizes. The batch starts only after the event scan has settled.
-
-## Pi non-repository startup retries (2026-10-27, Asia/Singapore)
-
-A waiting pi watcher performs one Git lookup per five-second interval, about
-12 child processes per minute per non-repository session. On this macOS host
-with Node 22.23.2, an isolated empty directory and warm caches, one warm-up
-and 15 direct `git rev-parse --show-toplevel` calls had a median wall time of
-8.23 ms (range 6.94–12.57 ms). This small single-process sample excludes pi,
-CPU, memory, cold caches, concurrent sessions and other operating systems; it
-is not an end-to-end latency claim. Evidence: `/tmp/gitrelay-pi-nongit-perf.uKWSp07Z/`.

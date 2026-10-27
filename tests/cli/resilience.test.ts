@@ -251,15 +251,15 @@ test("interrupting an actual 5000-event GC scan does not strand publish.lock", a
 
 test("large Write-tool hooks deliver normally; oversized input fails open without consuming events", async (t) => {
   const f = await fixture(t);
-  const input = { hook_event_name: "SessionStart", session_id: "S", cwd: f.b };
+  const input = { hook_event_name: "UserPromptSubmit", prompt: "Enable GitRelay", session_id: "S", cwd: f.b };
   async function hook(value: object) {
-    const result = run("hook", "claude-code");
+    const result = run("hook", "codex");
     result.child.stdin!.end(JSON.stringify(value));
     return result;
   }
   await hook(input);
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "claude-code", session: "S" }, "refs/heads/main");
+  const key = sessionKey(repo, { adapter: "codex", session: "S" }, "refs/heads/main");
   const first = await sendMessage({ cwd: f.a, adapter: "cli", session: "sender", text: "large hook note" });
   const large = await hook({ ...input, hook_event_name: "PostToolUse", tool_input: { content: "x".repeat(1100 * 1024) } });
   assert.match(large.stdout, /large hook note/);

@@ -27,7 +27,7 @@ source files rather than generated output. Do not commit `dist/`,
 
 - Keep the change focused and reuse existing helpers. The runtime uses Node's
   standard library and local Git; avoid adding runtime dependencies.
-- Shared Git, state, and delivery logic lives in `src/core/`; host integration
+- Shared Git, state, and delivery logic lives in `src/core/`; Codex/OpenCode integration
   belongs in `src/adapters/`, and CLI behavior in `src/cli/`.
 - Add a regression test for a bug fix. Tests live in `tests/core/`,
   `tests/adapters/`, and `tests/cli/`; reuse the temporary repositories and

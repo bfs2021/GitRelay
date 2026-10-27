@@ -51,7 +51,7 @@ async function readRecord(path: string): Promise<Record | undefined> {
   return record as Record;
 }
 
-const digest = (dir: string, signal?: AbortSignal) => installerDigest(dir, [""], "runtime", signal);
+const digest = (dir: string, signal?: AbortSignal) => installerDigest(dir, signal);
 
 const legacyBootstrap = `import { readFile, readdir } from "node:fs/promises";\nconst state = JSON.parse(await readFile(new URL("./opencode.json", import.meta.url), "utf8"));\nconst revisions = (await readdir(new URL("./opencode-revisions/", import.meta.url))).sort();\nconst revision = revisions.at(-1);\nif (!revision || !/^\\d{20}-[a-f0-9]{64}$/.test(revision) || (revision !== state.current && revision !== state.pending)) throw new Error("Invalid GitRelay OpenCode revision");\nexport default (await import(new URL("./runtimes/" + revision.slice(21) + "/dist/adapters/opencode/index.js", import.meta.url).href)).default;\n`;
 const bootstrap = legacyBootstrap.replace("const revision = revisions.at(-1);", "const revision = [state.pending, state.current].find((value) => revisions.includes(value));").replace("if (!revision", "if (state.removed || !revision");
