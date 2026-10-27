@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { renameSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { test } from "node:test";
 import { inspectChange, pathMatcher } from "../../src/core/changes.ts";
 import { consumeMailbox } from "../../src/core/consumer.ts";
@@ -85,6 +85,49 @@ test("removed worktrees can explicitly leave without acknowledging unread messag
   assert.ok((await leaveSession(receiver))?.closedAt);
   assert.equal(await readReceipt(repo, key, unread.id), undefined);
   assert.deepEqual((await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "after leave" })).recipients, []);
+});
+
+test("removed worktree leave requires its registered canonical path", { skip: process.platform === "win32" }, async (t) => {
+  const f = await fixture(t);
+  const alias = join(f.root, "alias");
+  await symlink(f.root, alias);
+  const receiver = { cwd: join(alias, basename(f.b)), ref, adapter: "test", session: "B", async deliver() {} };
+  await consumeMailbox(receiver);
+  const repo = await repository(f.b), key = sessionKey(repo, receiver, ref);
+  const unread = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "unread" });
+  git(f.main, "worktree", "remove", f.b);
+  await assert.rejects(leaveSession(receiver), /Cannot uniquely locate/);
+  assert.ok((await leaveSession({ ...receiver, cwd: repo.root }))?.closedAt);
+  assert.equal(await readReceipt(repo, key, unread.id), undefined);
+  assert.deepEqual((await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "after leave" })).recipients, []);
+});
+
+for (const kind of ["metadata", "sessions", "repository"] as const) test(`removed worktree leave ignores unrelated corrupt ${kind}`, async (t) => {
+  const f = await fixture(t);
+  const receiver = { cwd: f.b, ref, adapter: "test", session: "B", async deliver() {} };
+  await consumeMailbox(receiver);
+  const repo = await repository(f.b), key = sessionKey(repo, receiver, ref);
+  const unread = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "unread" });
+  const unrelated = join(stateDirectory(), "repos", "f".repeat(64));
+  if (kind !== "repository") await mkdir(unrelated);
+  const corrupt = kind === "repository" ? unrelated : join(unrelated, kind === "metadata" ? "repo.json" : "sessions");
+  await writeFile(corrupt, "{corrupt");
+  git(f.main, "worktree", "remove", f.b);
+  assert.ok((await leaveSession(receiver))?.closedAt);
+  assert.equal(await readReceipt(repo, key, unread.id), undefined);
+  assert.equal(await readFile(corrupt, "utf8"), "{corrupt");
+});
+
+test("removed worktree leave rejects corrupt metadata for its own session", async (t) => {
+  const f = await fixture(t);
+  const receiver = { cwd: f.b, ref, adapter: "test", session: "B", async deliver() {} };
+  await consumeMailbox(receiver);
+  const repo = await repository(f.b), path = join(repo.directory, "sessions", `${sessionKey(repo, receiver, ref)}.json`);
+  const before = await readFile(path);
+  git(f.main, "worktree", "remove", f.b);
+  await writeFile(join(repo.directory, "repo.json"), "{corrupt");
+  await assert.rejects(leaveSession(receiver), SyntaxError);
+  assert.deepEqual(await readFile(path), before);
 });
 
 test("dangling lock symlinks fail immediately for ordinary operations and daemon", async (t) => {

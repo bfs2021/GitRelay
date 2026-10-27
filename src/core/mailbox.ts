@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, rename, stat } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { formatChange, type Change } from "./changes.ts";
-import { hash, isCommit, isId, readJson, repository, withLock, writeJson, type Repository } from "./store.ts";
+import { checkStateDirectory, hash, isCommit, isId, readJson, repository, repositoryMetadata, withLock, writeJson, type Repository } from "./store.ts";
 
 export interface Identity {
   adapter: string;
@@ -45,7 +45,7 @@ export function validateIdentity(identity: Identity): void {
   if (typeof identity.session !== "string" || !identity.session || identity.session.length > 512) throw new Error("A non-empty session ID (max 512 characters) is required.");
 }
 
-export function sessionKey(repo: Repository, identity: Identity, ref: string): string {
+export function sessionKey(repo: Pick<Repository, "root">, identity: Identity, ref: string): string {
   validateIdentity(identity);
   return hash([repo.root, ref, identity.adapter, identity.session]);
 }
@@ -56,11 +56,17 @@ export async function listSessions(cwd: string): Promise<Session[]> {
 
 export async function readSession(repo: Repository, key: string): Promise<Session | undefined> {
   if (!isId(key)) throw new Error("Invalid session key.");
-  const value = await readJson(join(repo.directory, "sessions", `${key}.json`)) as Session | undefined;
+  const value = await readJson(join(repo.directory, "sessions", `${key}.json`));
   if (value === undefined) return;
-  if (!value || value.key !== key || typeof value.root !== "string" || typeof value.ref !== "string" || !Number.isFinite(Date.parse(value.createdAt)) || !Number.isFinite(Date.parse(value.lastSeen)) || (value.closedAt !== undefined && !Number.isFinite(Date.parse(value.closedAt))) || (value.migrated !== undefined && typeof value.migrated !== "boolean") || (value.baseline !== undefined && !isCommit(value.baseline))) throw new Error(`Invalid session: ${key}`);
-  validateIdentity(value);
-  return value;
+  return validateSession(value, key);
+}
+
+export function validateSession(value: unknown, key: string): Session {
+  const session = value as Session;
+  if (!isId(key) || !session || session.key !== key || typeof session.root !== "string" || typeof session.ref !== "string" || typeof session.createdAt !== "string" || !Number.isFinite(Date.parse(session.createdAt)) || typeof session.lastSeen !== "string" || !Number.isFinite(Date.parse(session.lastSeen)) || (session.closedAt !== undefined && (typeof session.closedAt !== "string" || !Number.isFinite(Date.parse(session.closedAt)))) || (session.migrated !== undefined && typeof session.migrated !== "boolean") || (session.baseline !== undefined && !isCommit(session.baseline))) throw new Error(`Invalid session: ${key}`);
+  validateIdentity(session);
+  if (sessionKey({ root: session.root }, session, session.ref) !== key) throw new Error(`Invalid session: ${key}`);
+  return session;
 }
 
 export async function sessionsIn(repo: Repository): Promise<Session[]> {
@@ -79,6 +85,11 @@ export async function sessionsIn(repo: Repository): Promise<Session[]> {
 
 /** Caller owns publish.lock, also held by GC while reusing validated migration state. */
 export async function registerSession(repo: Repository, identity: Identity, ref: string, baseline?: string): Promise<Session> {
+  const adapter = identity.adapter;
+  validateIdentity({ adapter, session: "snapshot" });
+  identity = { adapter, session: identity.session };
+  validateIdentity(identity);
+  repo = { root: repo.root, directory: repo.directory } as Repository;
   const key = sessionKey(repo, identity, ref);
   const path = join(repo.directory, "sessions", `${key}.json`);
   const previous = await readSession(repo, key);
@@ -105,6 +116,7 @@ export function validateEvent(value: unknown, id: string): SharedEvent {
 export async function eventsIn(repo: Repository, key?: string, signal?: AbortSignal): Promise<SharedEvent[]> {
   if (key !== undefined && !isId(key)) throw new Error("Invalid receipt key.");
   signal?.throwIfAborted();
+  if (key !== undefined) await checkStateDirectory(join(repo.directory, "receipts", key), true);
   const receipts = new Set(key === undefined ? [] : await readdir(join(repo.directory, "receipts", key)).catch((error) => {
     if (error.code === "ENOENT") return [];
     throw error;
@@ -132,65 +144,96 @@ export async function eventsIn(repo: Repository, key?: string, signal?: AbortSig
 
 export async function readReceipt(repo: Repository, key: string, eventId: string): Promise<{ eventId: string; status: "delivered" | "irrelevant"; at: string } | undefined> {
   if (!isId(key) || !isId(eventId)) throw new Error("Invalid receipt key.");
+  await checkStateDirectory(join(repo.directory, "receipts", key), true);
   const path = join(repo.directory, "receipts", key, `${eventId}.json`);
-  const receipt = await readJson(path) as { eventId: string; status: "delivered" | "irrelevant"; at: string } | undefined;
+  const receipt = await readJson(path, true);
   if (receipt === undefined) return;
-  if (!receipt || receipt.eventId !== eventId || !["delivered", "irrelevant"].includes(receipt.status) || typeof receipt.at !== "string" || !Number.isFinite(Date.parse(receipt.at))) throw new Error(`Invalid receipt: ${path}`);
+  return validateReceipt(receipt, eventId, path);
+}
+
+export function validateReceipt(value: unknown, eventId: string, path: string): { eventId: string; status: "delivered" | "irrelevant"; at: string } {
+  const receipt = value as { eventId: string; status: "delivered" | "irrelevant"; at: string };
+  if (!isId(eventId) || !receipt || receipt.eventId !== eventId || !["delivered", "irrelevant"].includes(receipt.status) || typeof receipt.at !== "string" || !Number.isFinite(Date.parse(receipt.at))) throw new Error(`Invalid receipt: ${path}`);
   return receipt;
 }
 
 export async function publishUpstream(repo: Repository, identity: Identity, ref: string, previous: string, commit: string, recipients: string[], salt = ""): Promise<UpstreamEvent> {
+  if (!Array.isArray(recipients)) throw new Error("Invalid upstream publication input.");
+  const targetRecipients = [...recipients], repository = { ...repo, root: repo.root, directory: repo.directory };
+  const sender = { adapter: identity.adapter, session: identity.session, root: repository.root };
+  validateIdentity(sender);
+  if (typeof sender.root !== "string" || typeof ref !== "string" || !isCommit(previous) || !isCommit(commit) || !targetRecipients.every(isId) || typeof salt !== "string") throw new Error("Invalid upstream publication input.");
   const id = hash(["upstream", ref, previous, commit, salt]);
-  const path = join(repo.directory, "events", `${id}.json`);
-  const existing = await readJson(path);
-  if (existing) {
+  const path = join(repository.directory, "events", `${id}.json`);
+  let existing = await readJson(path);
+  // Recover a pre-fix GC journal only when all original acknowledgements are
+  // still present. Missing receipts cannot be reconstructed safely.
+  const trash = join(repository.directory, "trash", `${id}.json`);
+  const discarded = await readJson(trash);
+  if (discarded !== undefined) {
+    if (existing !== undefined) throw new Error(`Upstream event exists in both events and trash: ${id}`);
+    const event = validateEvent(discarded, id);
+    if (event.kind !== "upstream" || event.ref !== ref || event.previous !== previous || event.commit !== commit) throw new Error(`Upstream trash does not match publication: ${id}`);
+    for (const key of event.recipients) if (!await readReceipt(repository, key, id)) throw new Error(`Upstream trash has missing receipt; manual recovery required: ${id}`);
+    await rename(trash, path);
+    existing = discarded;
+  }
+  if (existing !== undefined) {
     const event = validateEvent(existing, id);
     if (event.kind !== "upstream") throw new Error(`Expected upstream event: ${id}`);
-    const added = recipients.filter((key) => !event.recipients.includes(key));
+    if (event.ref !== ref || event.previous !== previous || event.commit !== commit) throw new Error(`Upstream event does not match publication: ${id}`);
+    const added = targetRecipients.filter((key) => !event.recipients.includes(key));
     if (added.length) {
       event.recipients = [...new Set([...event.recipients, ...added])];
       await writeJson(path, event);
     }
     return event;
   }
-  const event: UpstreamEvent = { id, kind: "upstream", ref, previous, commit, recipients, sender: { adapter: identity.adapter, session: identity.session, root: repo.root }, createdAt: new Date().toISOString() };
+  const event: UpstreamEvent = { id, kind: "upstream", ref, previous, commit, recipients: targetRecipients, sender, createdAt: new Date().toISOString() };
   await writeJson(path, event);
   return event;
 }
 
+export function messagePayloadWithinLimit(text: string, files: unknown[]): boolean {
+  return Buffer.byteLength(text) <= 64 * 1024 && Buffer.byteLength(JSON.stringify({ text, files })) <= 64 * 1024;
+}
+
 function validateMessage(text: unknown, files: unknown, strict = true): string[] {
   if (typeof text !== "string" || !text.trim() || Buffer.byteLength(text) > 64 * 1024) throw new Error("Message text must be non-empty and at most 64 KiB.");
-  if (!Array.isArray(files) || Buffer.byteLength(JSON.stringify({ text, files })) > 64 * 1024 || files.length > 1000 || !files.every((file) => typeof file === "string" && file.length > 0 && file.length <= 4096 && !file.includes("\0") && !/^(?:[\\/]|[A-Za-z]:)/.test(file) && !file.split(/[\\/]/).includes(".."))) throw new Error("Message files must be repository-relative paths (max 1000), without parent traversal.");
+  if (!Array.isArray(files)) throw new Error("Message files must be repository-relative paths (max 1000), without parent traversal.");
+  const paths = [...files];
+  if (!messagePayloadWithinLimit(text, paths) || paths.length > 1000 || !paths.every((file) => typeof file === "string" && file.length > 0 && file.length <= 4096 && !file.includes("\0") && !/^(?:[\\/]|[A-Za-z]:)/.test(file) && !file.split(/[\\/]/).includes(".."))) throw new Error("Message files must be repository-relative paths (max 1000), without parent traversal.");
   // Git emits slash-separated paths; backslashes are literal filename characters on Unix.
-  const normalized = files.map((file: string) => posix.normalize(process.platform === "win32" ? file.replaceAll("\\", "/") : file));
+  const normalized = paths.map((file: string) => posix.normalize(process.platform === "win32" ? file.replaceAll("\\", "/") : file));
   // Old producers accepted these literal paths; keep them non-matching rather than bricking the inbox.
   if (strict && normalized.some((file) => file === "." || file.endsWith("/") || /^(?:[\\/]|[A-Za-z]:)/.test(file))) throw new Error("Message files must be repository-relative file paths, not directories.");
   return [...new Set(normalized)];
 }
 
 export async function sendMessage(options: Identity & { cwd: string; ref?: string; text: string; files?: string[]; signal?: AbortSignal }): Promise<AgentMessage> {
-  validateIdentity(options);
-  const files = validateMessage(options.text, options.files ?? []);
-  const repo = await repository(options.cwd, options.signal);
+  const { cwd, adapter, session, text, signal } = options;
+  const identity = { adapter, session }, ref = options.ref ?? "refs/heads/main";
+  validateIdentity(identity);
+  const files = validateMessage(text, options.files ?? []);
+  const repo = await repository(cwd, signal);
   for (const file of files) {
-    options.signal?.throwIfAborted();
+    signal?.throwIfAborted();
     const info = await stat(join(repo.root, file)).catch((error) => {
       if (error.code === "ENOENT" || error.code === "ENOTDIR") return undefined; // Targets may exist only in another worktree.
       throw error;
     });
     if (info?.isDirectory()) throw new Error(`Message files must name files, not directories: ${file}`);
   }
-  const ref = options.ref ?? "refs/heads/main";
   return withLock(join(repo.directory, "publish.lock"), async () => {
-    await writeJson(join(repo.directory, "repo.json"), { id: repo.id, common: repo.common });
-    const sender = await readSession(repo, sessionKey(repo, options, ref));
+    await writeJson(join(repo.directory, "repo.json"), repositoryMetadata(repo));
+    const sender = await readSession(repo, sessionKey(repo, identity, ref));
     if (sender?.closedAt) throw new Error("This session has left; use join before sending messages.");
-    const recipients = (await sessionsIn(repo)).filter((session) => !session.closedAt && !(session.root === repo.root && session.adapter === options.adapter && session.session === options.session)).map((session) => session.key);
-    const event: AgentMessage = { id: hash(randomUUID()), kind: "message", createdAt: new Date().toISOString(), sender: { adapter: options.adapter, session: options.session, root: repo.root }, recipients, text: options.text, files };
-    options.signal?.throwIfAborted();
+    const recipients = (await sessionsIn(repo)).filter((other) => !other.closedAt && !(other.root === repo.root && other.adapter === adapter && other.session === session)).map((other) => other.key);
+    const event: AgentMessage = { id: hash(randomUUID()), kind: "message", createdAt: new Date().toISOString(), sender: { adapter, session, root: repo.root }, recipients, text, files };
+    signal?.throwIfAborted();
     await writeJson(join(repo.directory, "events", `${event.id}.json`), event);
     return event;
-  }, { signal: options.signal, waitMs: 5000 });
+  }, { signal, waitMs: 5000 });
 }
 
 export function formatNotifications(notifications: Notification[]): string {

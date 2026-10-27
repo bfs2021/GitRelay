@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { git } from "./git.ts";
+import { git, gitPathLine, GitPathOutputError } from "./git.ts";
 
 const PATCH_LIMIT = 24 * 1024;
 
@@ -23,7 +23,7 @@ export interface Change extends Cursor {
 const names = (output: string) => output.split("\0").filter(Boolean);
 
 export async function watchRoot(cwd: string, signal?: AbortSignal): Promise<string> {
-  return (await git(cwd, ["rev-parse", "--show-toplevel"], signal)).replace(/\r?\n$/, "");
+  return gitPathLine(await git(cwd, ["rev-parse", "--show-toplevel"], signal, "paths"));
 }
 
 export async function resolveMain(root: string, ref: string, signal?: AbortSignal): Promise<string> {
@@ -38,7 +38,7 @@ export async function resolveMain(root: string, ref: string, signal?: AbortSigna
 async function patch(root: string, before: string, after: string, files: string[], limit: number, signal?: AbortSignal): Promise<string> {
   signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
-    const child = spawn("git", ["--no-pager", "-C", root, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--unified=3", before, after, "--", ...files.map((file) => `:(literal)${file}`)], {
+    const child = spawn("git", ["--no-pager", "-C", root, "diff", "--ignore-submodules=none", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--unified=3", before, after, "--", ...files.map((file) => `:(literal)${file}`)], {
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 30_000,
       signal,
@@ -62,6 +62,74 @@ async function patch(root: string, before: string, after: string, files: string[
   });
 }
 
+// Stream the index: unrelated tracked paths may be non-UTF-8 and the index can exceed Git's output limit.
+async function gitlinkFiles(root: string, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", ["--no-optional-locks", "-c", "core.fsmonitor=false", "-C", root, "ls-files", "--stage", "-z"], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+    const links: string[] = [];
+    let bytes = 0, pending = Buffer.alloc(0), pendingLength = 0, stderr = "", failure: Error | undefined;
+    const abort = () => {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      child.stdout.destroy();
+      child.stderr.destroy();
+    };
+    const timer = setTimeout(() => { failure ??= new Error("Git index query timed out."); abort(); }, 30_000);
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (failure) return;
+      try {
+        let start = 0;
+        while (start < chunk.length) {
+          const end = chunk.indexOf(0, start);
+          const part = chunk.subarray(start, end < 0 ? chunk.length : end);
+          if (part.length + pendingLength > 16 * 1024 * 1024) throw new Error("Git index record exceeds 16 MiB.");
+          let row = part;
+          if (pendingLength || end < 0) {
+            const needed = pendingLength + part.length;
+            if (pending.length < needed) {
+              const next = Buffer.allocUnsafe(Math.min(16 * 1024 * 1024, Math.max(256, pending.length * 2, needed)));
+              pending.copy(next, 0, 0, pendingLength);
+              pending = next;
+            }
+            part.copy(pending, pendingLength);
+            pendingLength = needed;
+            row = pending.subarray(0, pendingLength);
+          }
+          if (end < 0) break;
+          const tab = row.indexOf(9);
+          if (tab < 0 || !/^[0-7]{6} (?:[0-9a-f]{40}|[0-9a-f]{64}) [0-3]$/.test(row.subarray(0, tab).toString("latin1"))) throw new Error("Invalid Git index output.");
+          if (row.subarray(0, 6).toString("latin1") === "160000") {
+            bytes += row.length - tab;
+            if (bytes > 16 * 1024 * 1024) throw new Error("Gitlink paths exceed 16 MiB.");
+            try { links.push(decoder.decode(row.subarray(tab + 1))); }
+            catch (cause) { throw new GitPathOutputError("Git returned a gitlink path that is not valid UTF-8; cannot safely continue.", { cause }); }
+          }
+          pendingLength = 0;
+          start = end + 1;
+        }
+      } catch (error) { failure = error as Error; abort(); }
+    });
+    const streamFailure = (error: Error) => { failure ??= error; abort(); };
+    child.stdout.on("error", streamFailure);
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (part: string) => { stderr = (stderr + part).slice(0, 4096); });
+    child.stderr.on("error", streamFailure);
+    child.on("error", (error) => { failure ??= error; abort(); });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      if (signal?.aborted) return reject(signal.reason);
+      if (failure) return reject(failure);
+      if (code !== 0) return reject(new Error(stderr || `git ls-files exited with ${code}`));
+      if (pendingLength) return reject(new Error("Unterminated Git index output."));
+      resolve(links.join("\0"));
+    });
+  });
+}
+
 export async function worktreeFiles(root: string, current: string, signal?: AbortSignal): Promise<Set<string>> {
   const head = await git(root, ["rev-parse", "--verify", "HEAD^{commit}"], signal).then((value) => value.trim()).catch((cause) => {
     signal?.throwIfAborted();
@@ -74,11 +142,11 @@ export async function worktreeFiles(root: string, current: string, signal?: Abor
   const own = new Set<string>();
   // Independent reads; settle every child before releasing the consumer lock on failure.
   const reads = await Promise.allSettled([
-    ["diff", "--name-only", "--no-renames", "-z", base, head, "--"],
-    ["diff", "--name-only", "--no-renames", "-z", "--cached", "--"],
+    ["diff", "--ignore-submodules=none", "--name-only", "--no-renames", "-z", base, head, "--"],
+    ["diff", "--ignore-submodules=none", "--name-only", "--no-renames", "-z", "--cached", "--"],
     ["diff", "--name-only", "--no-renames", "-z", "--"],
     ["ls-files", "--others", "-z"],
-  ].map((args) => git(root, args, signal)));
+  ].map((args) => git(root, args, signal, "paths")).concat([gitlinkFiles(root, signal)]));
   for (const result of reads) {
     if (result.status === "rejected") throw result.reason;
     for (const file of names(result.value)) own.add(file);
@@ -117,11 +185,11 @@ export async function pathMatcher(root: string, files: Set<string>, signal?: Abo
 }
 
 async function historyFiles(root: string, steps: string[][], snapshot: boolean, signal?: AbortSignal): Promise<string[][]> {
-  const read = async ([commit, before]: string[]) => names(await git(root, ["diff", "--name-only", "--no-renames", "-z", before, commit, "--"], signal));
+  const read = async ([commit, before]: string[]) => names(await git(root, ["diff", "--ignore-submodules=none", "--name-only", "--no-renames", "-z", before, commit, "--"], signal, "paths"));
   if (snapshot || steps.length === 1) return [await read(steps[0])];
   let output: string;
   try {
-    output = await git(root, ["log", "--no-walk=unsorted", "--diff-merges=first-parent", "--format=%x00%H", "--always", "--no-show-signature", "--no-notes", "--no-color", "--name-only", "--no-renames", "-z", ...steps.map(([commit]) => commit), "--"], signal);
+    output = await git(root, ["log", "--no-walk=unsorted", "--diff-merges=first-parent", "--ignore-submodules=none", "--format=%x00%H", "--always", "--no-show-signature", "--no-notes", "--no-color", "--name-only", "--no-renames", "-z", ...steps.map(([commit]) => commit), "--"], signal, "paths");
   } catch (error) {
     // Preserve the per-commit size limit if combining otherwise valid outputs exceeds it.
     if ((error as Error & { cause?: { code?: string } }).cause?.code !== "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") throw error;
@@ -154,17 +222,9 @@ export async function inspectChange(cursor: Cursor, current: string, signal?: Ab
   try { common = (await git(root, ["merge-base", cursor.commit, current], signal)).trim(); }
   catch (cause) {
     signal?.throwIfAborted();
-    for (const commit of [cursor.commit, current]) {
-      try { await git(root, ["cat-file", "-e", `${commit}^{commit}`], signal); }
-      catch (error) {
-        signal?.throwIfAborted();
-        const code = (error as Error & { cause?: { code?: unknown } }).cause?.code;
-        if (code !== 1 && code !== 128) throw error;
-        // Deliver the history gap explicitly; only durable host acceptance may acknowledge it.
-        return { ...cursor, commit: current, eventId: `${cursor.ref}:${cursor.commit}..${current}`, previous: cursor.commit, rewritten: false, unavailable: true, files: [], commits: [], patch: "" };
-      }
-    }
-    throw new Error("The event commits have no common ancestor, so changes cannot be reconstructed. Check the repository and monitored branch. Unread events are preserved.", { cause });
+    const failure = (cause as Error & { cause?: NodeJS.ErrnoException & { signal?: NodeJS.Signals | null; killed?: boolean } }).cause;
+    if (typeof failure?.code === "string" || failure?.signal || failure?.killed) throw cause;
+    throw new Error(`Git could not compare upstream history ${JSON.stringify({ ref: cursor.ref, previous: cursor.commit, commit: current })}. A commit may be missing, history may be unrelated, or Git may be unable to read the repository. Restore trusted history or repair Git and retry; unread events are preserved.`, { cause });
   }
   const own = await worktreeFiles(root, current, signal);
   if (!own.size) return undefined;
@@ -224,7 +284,7 @@ export function formatChange(change: Change): string {
     change.rewritten ? "Warning: Main branch history was rewritten. The following compares snapshots before and after the update, rather than representing a normal merge."
       : change.snapshot ? "The previous position is not on the current first-parent chain. The following compares snapshots without replaying side-branch history."
       : "Each update was checked along the first-parent chain, including merges, squashes, and direct commits.",
-    "Upstream changes overlap paths in your unintegrated commits, index, uncommitted, untracked, or ignored local files, including file/directory prefix overlap.",
+    "Upstream paths may overlap your local work, including file/directory prefix overlap. Submodule paths are considered potentially relevant even when clean or uninitialized.",
     "This is file-level relevance, not a guaranteed conflict; local code has not been automatically synchronized.",
     "Reread the relevant files and Git status to assess the effect on the current task. Report no impact, adaptation needed, synchronization needed, or blocked by conflicts. Update implementation and tests when safe and authorized.",
     "Preserve local changes. This message does not authorize merge/rebase, reset, stash, commit, or push. Do not initiate another merge solely because of this event.",

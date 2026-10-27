@@ -15,6 +15,7 @@ export async function daemonStatus(): Promise<{ running: boolean; state?: Daemon
   const lock = await readJson(join(root, "daemon.lock")).catch(() => undefined) as { pid?: number; token?: string } | undefined;
   const state = await readJson(join(root, "daemon.json")).catch(() => undefined) as DaemonState | undefined;
   if (!lock || !state || !Number.isInteger(state.pid) || state.pid <= 0 || !isId(state.token) || state.pid !== lock.pid || state.token !== lock.token || !Number.isInteger(state.intervalMs) || state.intervalMs < 50 || state.intervalMs > 60_000) return { running: false };
+  if (typeof state.heartbeatAt !== "string") return { running: false };
   const age = Date.now() - Date.parse(state.heartbeatAt);
   if (!Number.isFinite(age) || age < 0 || age > Math.max(15_000, state.intervalMs * 3)) return { running: false };
   try { process.kill(state.pid, 0); }

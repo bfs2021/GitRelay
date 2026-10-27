@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { git } from "./git.ts";
+import { git, gitRefLine, gitRefLines } from "./git.ts";
 import { isCommit } from "./store.ts";
 
 const exec = promisify(execFile);
@@ -31,26 +31,48 @@ async function gh(cwd: string, args: string[], signal?: AbortSignal): Promise<un
 
 export async function branchStatus(options: BranchStatusOptions) {
   const { cwd, signal } = options;
-  const status = (await git(cwd, ["--no-optional-locks", "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=normal"], signal)).split("\0");
+  const status = (await git(cwd, ["--no-optional-locks", "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=normal"], signal, "paths")).split("\0");
   const header = (name: string) => status.find((line) => line.startsWith(`# branch.${name} `))?.slice(name.length + 10);
   const head = header("oid");
   const current = header("head");
+  let currentBranch = current ?? null;
+  let nonBranchHead = false;
+  if (current === "(detached)" || current === "(null)") {
+    const symbolicHead = async () => {
+      try { return gitRefLine(await git(cwd, ["symbolic-ref", "-q", "HEAD"], signal, "paths")); }
+      catch (error) {
+        signal?.throwIfAborted();
+        const cause = (error as Error & { cause?: { code?: unknown; stderr?: Buffer | string } }).cause;
+        if (cause?.code === 1 && !cause.stderr?.toString()) return null;
+        throw error;
+      }
+    };
+    const first = await symbolicHead();
+    const check = (await git(cwd, ["--no-optional-locks", "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=normal"], signal, "paths")).split("\0");
+    const second = await symbolicHead();
+    const expected = first === null ? "(detached)" : first.startsWith("refs/heads/") ? first.slice("refs/heads/".length) : "(null)";
+    if (first !== second || current !== expected || !check.includes(`# branch.head ${current}`) || !check.includes(`# branch.oid ${head}`)) {
+      throw new Error("HEAD changed while reading worktree status; retry.");
+    }
+    nonBranchHead = first !== null && !first.startsWith("refs/heads/");
+    currentBranch = first?.startsWith("refs/heads/") ? first.slice("refs/heads/".length) : null;
+  }
   const worktree = {
-    branch: current === "(detached)" ? null : current ?? null,
+    branch: currentBranch,
     commit: isCommit(head) ? head : null,
     dirty: status.some((line) => /^[12u?] /.test(line)),
   };
   const branch = options.branch ?? worktree.branch;
-  if (!branch) throw new Error("Detached HEAD: choose --branch NAME to monitor a local/GitHub branch.");
+  if (!branch) throw new Error(`${nonBranchHead ? "HEAD does not point to a local branch" : "Detached HEAD"}: choose --branch NAME to monitor a local/GitHub branch.`);
   const ref = `refs/heads/${branch}`;
   await git(cwd, ["check-ref-format", ref], signal);
-  const rows = (await git(cwd, ["for-each-ref", "--format=%(refname)%00%(objectname)%00%(upstream)", "--", ref], signal)).trimEnd().split("\n");
+  const rows = gitRefLines(await git(cwd, ["for-each-ref", "--format=%(refname)%00%(objectname)%00%(upstream)", "--", ref], signal, "paths"));
   const row = rows.map((line) => line.split("\0")).find(([name]) => name === ref);
   const commit = row?.[1] ?? null;
   const upstream = row?.[2] || null;
   let tracking: { ref: string; commit: string | null; ahead: number | null; behind: number | null } | null = null;
   if (upstream) {
-    const upstreamRows = (await git(cwd, ["for-each-ref", "--format=%(refname)%00%(objectname)", "--", upstream], signal)).trimEnd().split("\n");
+    const upstreamRows = gitRefLines(await git(cwd, ["for-each-ref", "--format=%(refname)%00%(objectname)", "--", upstream], signal, "paths"));
     const upstreamCommit = upstreamRows.map((line) => line.split("\0")).find(([name]) => name === upstream)?.[1] ?? null;
     tracking = { ref: upstream, commit: upstreamCommit, ahead: null, behind: null };
     if (upstreamCommit && commit) {

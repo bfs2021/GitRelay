@@ -1,14 +1,52 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { test } from "node:test";
 import { consumeMailbox } from "../../src/core/consumer.ts";
 import { collectGarbage } from "../../src/core/cleanup.ts";
 import { eventsIn, listSessions, sendMessage, sessionKey, type Notification } from "../../src/core/mailbox.ts";
-import { repository } from "../../src/core/store.ts";
+import { synchronizeRef } from "../../src/core/publisher.ts";
+import { repository, withLock } from "../../src/core/store.ts";
 import { fixture, git } from "../helpers.ts";
 
 const ref = "refs/heads/main";
+
+test("invalid UTF-8 in an event or receipt cannot silently acknowledge a message", async (t) => {
+  const f = await fixture(t);
+  const delivered: string[] = [];
+  const recipient = { cwd: f.b, ref, adapter: "test", session: "recipient", async deliver(batch: Notification[]) { delivered.push(...batch.map((item) => item.event.id)); } };
+  await consumeMailbox(recipient);
+  const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "ABCZZZDEF" });
+  const repo = await repository(f.b), key = sessionKey(repo, recipient, ref);
+  const eventPath = join(repo.directory, "events", `${event.id}.json`), receiptPath = join(repo.directory, "receipts", key, `${event.id}.json`);
+  const original = await readFile(eventPath), corrupt = Buffer.from(original);
+  const offset = corrupt.indexOf(Buffer.from("ZZZ"));
+  assert.notEqual(offset, -1);
+  corrupt[offset] = 0xff;
+  await writeFile(eventPath, corrupt);
+  await assert.rejects(consumeMailbox(recipient), /Invalid UTF-8 in state file/);
+  await assert.rejects(collectGarbage(f.b, { apply: true, retentionDays: 0 }), /Invalid UTF-8 in state file/);
+  assert.deepEqual(await readFile(eventPath), corrupt);
+  await assert.rejects(stat(receiptPath), { code: "ENOENT" });
+  assert.deepEqual(delivered, []);
+
+  await writeFile(eventPath, original);
+  const invalidReceipt = Buffer.concat([
+    Buffer.from(`{"eventId":"${event.id}","status":"delivered","at":"${new Date().toISOString()}","note":"`),
+    Buffer.from([0xff]), Buffer.from('"}'),
+  ]);
+  await writeFile(receiptPath, invalidReceipt);
+  await assert.rejects(consumeMailbox(recipient), /Invalid UTF-8 in state file/);
+  await assert.rejects(collectGarbage(f.b, { apply: true, retentionDays: 0 }), /Invalid UTF-8 in state file/);
+  assert.deepEqual(await readFile(eventPath), original);
+  assert.deepEqual(await readFile(receiptPath), invalidReceipt);
+  assert.deepEqual(delivered, []);
+  await rm(receiptPath);
+  await consumeMailbox(recipient);
+  assert.deepEqual(delivered, [event.id]);
+});
 
 test("Claude Code publishes one message; Codex and OpenCode receive independent copies", async (t) => {
   const f = await fixture(t);
@@ -128,7 +166,7 @@ test("bounded batches leave remaining messages for the next check", async (t) =>
   assert.deepEqual(received, expected);
 });
 
-test("confirmed event payloads are skipped per session, but unread scans and GC still validate them", async (t) => {
+test("confirmed payloads are skipped in session scans, but publication recovery and GC validate them", async (t) => {
   const f = await fixture(t);
   let delivered = 0;
   const b = { cwd: f.b, ref, adapter: "codex", session: "B", async deliver() { delivered++; } };
@@ -140,7 +178,16 @@ test("confirmed event payloads are skipped per session, but unread scans and GC 
   const repo = await repository(f.b);
   const path = join(repo.directory, "events", `${event.id}.json`);
   await writeFile(path, "{}");
-  assert.deepEqual(await consumeMailbox(b), []);
+  const key = sessionKey(repo, b, ref);
+  const receiptPath = join(repo.directory, "receipts", key, `${event.id}.json`);
+  const receipt = await readFile(receiptPath, "utf8");
+  assert.deepEqual(await withLock(join(repo.directory, "sessions", `${key}.lock`), () => eventsIn(repo, key)), []);
+  // A receipt does not establish whether an unreadable payload is a pending
+  // upstream event, so synchronization preserves the data and stops.
+  await assert.rejects(consumeMailbox(b), /Invalid shared event/);
+  assert.equal(await readFile(receiptPath, "utf8"), receipt);
+  // A daemon has no subscriber receipt to establish the payload's kind.
+  await assert.rejects(withLock(join(repo.directory, "publish.lock"), () => synchronizeRef(repo, ref, b)), /Invalid shared event/);
   await assert.rejects(consumeMailbox(c), /Invalid shared event/);
   await assert.rejects(eventsIn(repo), /Invalid shared event/);
   await assert.rejects(collectGarbage(f.b, { apply: true, retentionDays: 0 }), /Invalid shared event/);
@@ -242,4 +289,86 @@ test("message validation and cancellation do not advance receipts", async (t) =>
   let count = 0;
   await consumeMailbox({ ...options, async deliver() { count++; } });
   assert.equal(count, 1);
+});
+
+test("cancellation while awaiting delivery confirmation preserves the event and releases locks", async (t) => {
+  const f = await fixture(t);
+  const recipient = { cwd: f.b, ref, adapter: "test", session: "recipient", async deliver() {} };
+  await consumeMailbox(recipient);
+  const repo = await repository(f.b), key = sessionKey(repo, recipient, ref);
+  for (const result of [true, false]) {
+    const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: `confirmation ${result}` });
+    const abort = new AbortController();
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    const pending = consumeMailbox({ ...recipient, signal: abort.signal, async isDelivered() { entered.resolve(); await release.promise; return result; }, async deliver() { assert.fail("cancelled confirmation must not deliver"); } });
+    await entered.promise;
+    abort.abort();
+    release.resolve();
+    await assert.rejects(pending, /abort/i);
+    await assert.rejects(stat(join(repo.directory, "receipts", key, `${event.id}.json`)), { code: "ENOENT" });
+    await assert.rejects(stat(join(repo.directory, "sessions", `${key}.lock`)), { code: "ENOENT" });
+    await assert.rejects(stat(join(repo.directory, "publish.lock")), { code: "ENOENT" });
+    let count = 0;
+    await consumeMailbox({ ...recipient, async deliver() { count++; } });
+    assert.equal(count, 1);
+  }
+});
+
+test("cancellation while awaiting pending delivery inspection preserves the event and releases locks", async (t) => {
+  const f = await fixture(t);
+  const recipient = { cwd: f.b, ref, adapter: "test", session: "recipient", async deliver() {} };
+  await consumeMailbox(recipient);
+  const repo = await repository(f.b), key = sessionKey(repo, recipient, ref);
+  for (const result of [true, false]) {
+    const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: `pending inspection ${result}` });
+    const abort = new AbortController();
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    const pending = consumeMailbox({ ...recipient, signal: abort.signal, async isPending() { entered.resolve(); await release.promise; return result; }, async deliver() { assert.fail("cancelled inspection must not deliver"); } });
+    await entered.promise;
+    abort.abort();
+    release.resolve();
+    await assert.rejects(pending, /abort/i);
+    await assert.rejects(stat(join(repo.directory, "receipts", key, `${event.id}.json`)), { code: "ENOENT" });
+    await assert.rejects(stat(join(repo.directory, "sessions", `${key}.lock`)), { code: "ENOENT" });
+    await assert.rejects(stat(join(repo.directory, "publish.lock")), { code: "ENOENT" });
+    let count = 0;
+    await consumeMailbox({ ...recipient, async deliver() { count++; } });
+    assert.equal(count, 1);
+  }
+});
+
+test("cancellation during receipt preparation does not commit any receipt", async (t) => {
+  const f = await fixture(t);
+  const recipient = { cwd: f.b, ref, adapter: "test", session: "recipient", async deliver() {} };
+  await consumeMailbox(recipient);
+  const repo = await repository(f.b), key = sessionKey(repo, recipient, ref), directory = join(repo.directory, "receipts", key);
+  for (const mode of ["known", "irrelevant", "accepted"] as const) {
+    const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: mode, files: mode === "irrelevant" ? ["shared.txt"] : [] });
+    const receipt = join(directory, `${event.id}.json`), abort = new AbortController();
+    const originalOpen = fs.promises.open;
+    let cancelled = false, delivered = 0;
+    fs.promises.open = (async (path: any, ...args: any[]) => {
+      const handle = await (originalOpen as any)(path, ...args);
+      if (String(path).startsWith(`${receipt}.`)) {
+        const originalWrite = handle.writeFile.bind(handle);
+        handle.writeFile = async (...writeArgs: any[]) => {
+          const result = await originalWrite(...writeArgs);
+          if (!cancelled) { cancelled = true; abort.abort(); }
+          return result;
+        };
+      }
+      return handle;
+    }) as typeof fs.promises.open;
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(consumeMailbox({ ...recipient, signal: abort.signal, isDelivered: mode === "known" ? async () => true : undefined, async deliver() { delivered++; } }), /abort/i);
+    } finally { fs.promises.open = originalOpen; syncBuiltinESMExports(); }
+    assert.equal(cancelled, true, mode);
+    assert.equal(delivered, mode === "accepted" ? 1 : 0, mode);
+    await assert.rejects(stat(receipt), { code: "ENOENT" });
+    assert.ok(!(await readdir(directory)).some((name) => name.startsWith(`${event.id}.json.`) && name.endsWith(".tmp")));
+    await assert.rejects(stat(join(repo.directory, "sessions", `${key}.lock`)), { code: "ENOENT" });
+    await consumeMailbox(recipient);
+    assert.equal((await readFile(receipt, "utf8")).includes(`"status":"${mode === "irrelevant" ? "irrelevant" : "delivered"}"`), true);
+  }
 });

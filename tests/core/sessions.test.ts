@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdir, rm } from "node:fs/promises";
+import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { consumeMailbox } from "../../src/core/consumer.ts";
@@ -55,6 +55,24 @@ test("explicit leave excludes future messages but keeps the old inbox for an exp
   const next = await sendMessage({ ...sender, text: "after rejoin" });
   await consumeMailbox(receiver);
   assert.deepEqual(received, [pending.id, next.id]);
+});
+
+test("session identity fields must match the stored key before leave or send", async (t) => {
+  const f = await fixture(t);
+  const receiver = { cwd: f.b, ref, adapter: "opencode", session: "B", async deliver() {} };
+  await consumeMailbox(receiver);
+  const repo = await repository(f.b), key = sessionKey(repo, receiver, ref);
+  const path = join(repo.directory, "sessions", `${key}.json`), original = await readFile(path, "utf8");
+  const session = JSON.parse(original);
+  for (const [field, value] of Object.entries({ root: f.a, ref: "refs/heads/other", adapter: "other", session: "other" })) {
+    const corrupt = JSON.stringify({ ...session, [field]: value });
+    await writeFile(path, corrupt);
+    await assert.rejects(leaveSession(receiver), /Invalid session/);
+    await assert.rejects(sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "preserve" }), /Invalid session/);
+    assert.equal(await readFile(path, "utf8"), corrupt);
+  }
+  await writeFile(path, original);
+  assert.ok((await leaveSession(receiver))?.closedAt);
 });
 
 test("lastSeen alone does not retire an offline session, and unknown leave does not register a ghost", async (t) => {

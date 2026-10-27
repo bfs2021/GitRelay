@@ -29,16 +29,18 @@ test("NUL parser preserves unusual paths and worktree metadata", () => {
   assert.equal(parseWorktrees("worktree /x\0locked\0\0")[0].locked, "");
 });
 
-test("create new/existing branches, list and remove while preserving branches", async (t) => {
+test("create new/existing branches and preserve worktrees when removal is unavailable", async (t) => {
   const { repo, root } = await fixture(t);
   const path = await addWorktree(repo, join(root, "space and \u4e2d\u6587\nworktree"), "feature/new", true);
   assert.equal((await listWorktrees(repo))[1].path, path);
   assert.equal((await listWorktrees(repo))[1].branch, "feature/new");
-  await removeWorktree(repo, path);
-  assert.equal((await listWorktrees(repo)).length, 1);
+  await assert.rejects(removeWorktree(repo, path), /Automatic worktree removal is temporarily unavailable/);
+  assert.equal((await listWorktrees(repo)).length, 2);
   git(repo, "show-ref", "--verify", "refs/heads/feature/new");
-  await addWorktree(repo, path, "feature/new");
-  await removeWorktree(repo, path);
+  git(repo, "branch", "feature/existing", "feature/new");
+  const other = await addWorktree(repo, join(root, "existing tree"), "feature/existing");
+  await assert.rejects(removeWorktree(repo, other), /Automatic worktree removal is temporarily unavailable/);
+  assert.equal((await listWorktrees(repo)).length, 3);
 });
 
 test("protect primary, current/subdirectory/symlink, locked and dirty worktrees", async (t) => {

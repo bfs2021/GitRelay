@@ -1,81 +1,143 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { inspectChange, pathMatcher, readCursor, resolveMain, worktreeFiles, type Change, type Cursor } from "./changes.ts";
-import { eventsIn, publishUpstream, readSession, registerSession, sessionKey, validateIdentity, type Identity, type Notification } from "./mailbox.ts";
-import { BusyError, readJson, repository, withLock, writeJson } from "./store.ts";
-import { daemonStatus } from "./daemon-state.ts";
-import { readRef, synchronizeRef } from "./publisher.ts";
+import { eventsIn, publishUpstream, readSession, registerSession, sessionKey, validateIdentity, type Identity, type Notification, type SharedEvent } from "./mailbox.ts";
+import { BusyError, GC_LOCK_TOKEN, checkStateDirectory, readJson, repository, repositoryMetadata, withLock, writeJson, type Repository } from "./store.ts";
+import { synchronizeRef } from "./publisher.ts";
+
+export interface DeliveryLocation { repository: Repository; sessionKey: string }
 
 export interface MailboxOptions extends Identity {
   cwd: string;
   ref: string;
   signal?: AbortSignal;
   initialCursor?: Cursor;
-  isDelivered?(eventId: string): boolean;
+  isDelivered?(eventId: string, event?: SharedEvent, location?: DeliveryLocation): boolean | Promise<boolean>;
+  /** Synchronously revalidate the host immediately before publishing a confirmed receipt. */
+  beforeReceipt?(eventId: string, event?: SharedEvent, location?: DeliveryLocation): void;
+  /** Skip a host-owned but not yet durable event without acknowledging it. */
+  isPending?(eventId: string, event?: SharedEvent, location?: DeliveryLocation): boolean | Promise<boolean>;
   /** false means queued but not durably accepted: retry without writing a receipt. */
-  deliver(notifications: Notification[]): Promise<void | boolean>;
+  deliver(notifications: Notification[], location?: DeliveryLocation): Promise<void | boolean>;
+  /** Deliver and acknowledge one notification at a time. */
+  deliverIndividually?: boolean;
   upstreamOnly?: boolean;
 }
 
 /** Register, publish shared ref updates, then consume this session's independent inbox. */
 export async function consumeMailbox(options: MailboxOptions): Promise<Notification[]> {
-  validateIdentity(options);
-  options.signal?.throwIfAborted();
-  const repo = await repository(options.cwd, options.signal);
-  const key = sessionKey(repo, options, options.ref);
+  return consumeMailboxInternal(options, options.deliverIndividually === true);
+}
+
+async function consumeMailboxInternal(options: MailboxOptions, individually: boolean): Promise<Notification[]> {
+  const adapter = options.adapter;
+  validateIdentity({ adapter, session: "snapshot" });
+  const session = options.session;
+  const identity = { adapter, session };
+  validateIdentity(identity);
+  const signal = options.signal;
+  signal?.throwIfAborted();
+  const cwd = options.cwd;
+  const ref = options.ref;
+  const repo = await repository(cwd, signal);
+  const key = sessionKey(repo, identity, ref);
+  const receipts = join(repo.directory, "receipts", key);
+  await checkStateDirectory(receipts, true);
+  let sessionAcquired = false;
   try {
     return await withLock(join(repo.directory, "sessions", `${key}.lock`), async () => {
       let current = "";
-      const subscribed = await withLock(join(repo.directory, "publish.lock"), async () => {
-        options.signal?.throwIfAborted();
-        const existing = await readSession(repo, key);
-        if (existing?.closedAt) return false;
-        const cached = await readRef(repo, options.ref);
-        const daemon = await daemonStatus();
-        const age = cached?.checkedAt ? Date.now() - Date.parse(cached.checkedAt) : Infinity;
-        if (existing && cached && daemon.running && age >= 0 && age <= Math.max(15_000, daemon.state!.intervalMs * 3)) current = cached.commit;
-        else current = await synchronizeRef(repo, options.ref, options, options.signal);
-        await writeJson(join(repo.directory, "repo.json"), { id: repo.id, common: repo.common });
-        const registered = await registerSession(repo, options, options.ref, current);
-        if (!registered.migrated) {
-          const legacyPath = join(repo.common, "worktree-agent-sync", `${key}.json`);
-          const legacy = options.initialCursor ?? await readJson(legacyPath);
-          const previous = legacy === undefined ? undefined : readCursor(legacy, repo.root, options.ref);
-          if (legacy !== undefined && !previous) throw new Error(`Invalid legacy cursor: ${legacyPath}`);
-          const baseline = registered.baseline!;
-          if (previous && previous.commit !== baseline) await publishUpstream(repo, options, options.ref, previous.commit, baseline, [key], `migration:${key}`);
-          await writeJson(join(repo.directory, "sessions", `${key}.json`), { ...registered, migrated: true });
-        }
-        return true;
-      }, { signal: options.signal, waitMs: 5000 });
+      let publishAcquired = false;
+      let subscribed: boolean;
+      try {
+        subscribed = await withLock(join(repo.directory, "publish.lock"), async () => {
+          signal?.throwIfAborted();
+          const existing = await readSession(repo, key);
+          if (existing?.closedAt) return false;
+          // A daemon hint cannot rule out a later interrupted publication.
+          current = await synchronizeRef(repo, ref, identity, signal);
+          await writeJson(join(repo.directory, "repo.json"), repositoryMetadata(repo));
+          const registered = await registerSession(repo, identity, ref, current);
+          if (!registered.migrated) {
+            const legacyPath = join(repo.common, "worktree-agent-sync", `${key}.json`);
+            const legacy = options.initialCursor ?? await readJson(legacyPath);
+            const previous = legacy === undefined ? undefined : readCursor(legacy, repo.root, ref);
+            if (legacy !== undefined && !previous) throw new Error(`Invalid legacy cursor: ${legacyPath}`);
+            const baseline = registered.baseline!;
+            if (previous && previous.commit !== baseline) await publishUpstream(repo, identity, ref, previous.commit, baseline, [key], `migration:${key}`);
+            await writeJson(join(repo.directory, "sessions", `${key}.json`), { ...registered, migrated: true });
+          }
+          return true;
+        }, { signal, waitMs: 5000, busyToken: GC_LOCK_TOKEN, onAcquired: () => { publishAcquired = true; } });
+      } catch (error) {
+        if (error instanceof BusyError && !publishAcquired) { signal?.throwIfAborted(); return []; }
+        throw error;
+      }
       if (!subscribed) return [];
-      const receipts = join(repo.directory, "receipts", key);
+      await checkStateDirectory(receipts, true);
       await mkdir(receipts, { recursive: true, mode: 0o700 });
+      await checkStateDirectory(receipts);
+      const writeReceipt = (path: string, eventId: string, status: "delivered" | "irrelevant", validate?: () => void) =>
+        writeJson(path, { eventId, status, at: new Date().toISOString() }, signal || validate ? () => {
+          signal?.throwIfAborted();
+          validate?.();
+          signal?.throwIfAborted();
+        } : undefined);
       const notifications: Notification[] = [];
       let overlaps: ((file: string) => boolean) | undefined;
+      let piProofs: Set<string> | undefined;
+      const hasPiProof = async (id: string): Promise<boolean> => {
+        if (adapter !== "pi") return false;
+        if (!piProofs) {
+          const names = await readdir(receipts);
+          signal?.throwIfAborted();
+          piProofs = new Set(names.flatMap((name) => {
+            const match = /^([a-f0-9]{64})\.[a-f0-9]{64}\.pi-proof$/.exec(name);
+            return match ? [match[1]] : [];
+          }));
+        }
+        return piProofs.has(id);
+      };
       let size = 0;
-      for (const event of await eventsIn(repo, key, options.signal)) {
-        options.signal?.throwIfAborted();
+      for (const event of await eventsIn(repo, key, signal)) {
+        signal?.throwIfAborted();
         if (!event.recipients.includes(key) || (options.upstreamOnly && event.kind !== "upstream")) continue;
+        if (event.kind === "upstream" && event.ref !== ref) throw new Error(`Upstream event ${event.id} targets a session subscribed to another ref; preserve state for inspection.`);
         const receipt = join(receipts, `${event.id}.json`);
-        if (options.isDelivered?.(event.id)) {
-          await writeJson(receipt, { eventId: event.id, status: "delivered", at: new Date().toISOString() });
+        const delivered = await options.isDelivered?.(event.id, event, { repository: repo, sessionKey: key });
+        signal?.throwIfAborted();
+        const hasProof = await hasPiProof(event.id);
+        signal?.throwIfAborted();
+        const unknownProof = () => new Error(`Pi delivery outcome is unknown for event ${event.id}; preserve the event and proofs in ${receipts} for native verification or manual recovery.`);
+        if (delivered) {
+          if (hasProof && !options.beforeReceipt) throw unknownProof();
+          await writeReceipt(receipt, event.id, "delivered", options.beforeReceipt ? () => {
+            const result: unknown = options.beforeReceipt!(event.id, event, { repository: repo, sessionKey: key });
+            if (result && (typeof result === "object" || typeof result === "function") && typeof (result as { then?: unknown }).then === "function") {
+              void Promise.resolve(result).catch(() => {});
+              throw new Error("beforeReceipt must be synchronous; the event was not acknowledged.");
+            }
+          } : undefined);
           continue;
         }
+        const pending = await options.isPending?.(event.id, event, { repository: repo, sessionKey: key });
+        signal?.throwIfAborted();
+        if (pending) continue;
+        if (hasProof) throw unknownProof();
         let notification: Notification | undefined;
-        if (event.kind === "upstream" && event.ref === options.ref) {
-          const change = await inspectChange({ root: repo.root, ref: event.ref, commit: event.previous }, event.commit, options.signal);
+        if (event.kind === "upstream" && event.ref === ref) {
+          const change = await inspectChange({ root: repo.root, ref: event.ref, commit: event.previous }, event.commit, signal);
           if (change) notification = { kind: "upstream", event, change: { ...change, eventId: event.id } };
         } else if (event.kind === "message") {
           if (event.files.length && !overlaps) {
-            // A daemon cache is a publication hint, not the current integration baseline.
-            const latest = await resolveMain(repo.root, options.ref, options.signal);
-            overlaps = await pathMatcher(repo.root, await worktreeFiles(repo.root, latest, options.signal), options.signal);
+            // File relevance uses the live worktree ref, not a prior publication cursor.
+            const latest = await resolveMain(repo.root, ref, signal);
+            overlaps = await pathMatcher(repo.root, await worktreeFiles(repo.root, latest, signal), signal);
           }
           if (!event.files.length || event.files.some(overlaps!)) notification = { kind: "message", event };
         }
         if (!notification) {
-          await writeJson(receipt, { eventId: event.id, status: "irrelevant", at: new Date().toISOString() });
+          await writeReceipt(receipt, event.id, "irrelevant");
           continue;
         }
         const length = JSON.stringify(notification).length;
@@ -84,16 +146,18 @@ export async function consumeMailbox(options: MailboxOptions): Promise<Notificat
         size += length;
       }
       if (!notifications.length) return [];
-      options.signal?.throwIfAborted();
-      const accepted = await options.deliver(notifications);
-      options.signal?.throwIfAborted();
-      if (accepted !== false) {
-        for (const notification of notifications) await writeJson(join(receipts, `${notification.event.id}.json`), { eventId: notification.event.id, status: "delivered", at: new Date().toISOString() });
+      signal?.throwIfAborted();
+      for (const batch of individually ? notifications.map((notification) => [notification]) : [notifications]) {
+        const accepted = await options.deliver(batch, { repository: repo, sessionKey: key });
+        signal?.throwIfAborted();
+        if (accepted !== false) {
+          for (const notification of batch) await writeReceipt(join(receipts, `${notification.event.id}.json`), notification.event.id, "delivered");
+        }
       }
       return notifications;
-    }, { signal: options.signal });
+    }, { signal, onAcquired: () => { sessionAcquired = true; } });
   } catch (error) {
-    if (error instanceof BusyError) return [];
+    if (error instanceof BusyError && !sessionAcquired) { signal?.throwIfAborted(); return []; }
     throw error;
   }
 }
@@ -107,11 +171,11 @@ export interface ConsumerOptions extends Identity {
 
 /** Compatibility API for hosts that only consume upstream changes, not agent messages. */
 export async function consumeChanges(options: ConsumerOptions): Promise<Change | undefined> {
-  const notifications = await consumeMailbox({
+  const notifications = await consumeMailboxInternal({
     ...options, upstreamOnly: true,
     async deliver(batch) {
       for (const notification of batch) if (notification.kind === "upstream") await options.deliver(notification.change);
     },
-  });
+  }, true);
   return notifications.find((notification) => notification.kind === "upstream")?.change;
 }

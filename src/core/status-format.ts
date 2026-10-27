@@ -8,7 +8,7 @@ export function formatBranchStatus(status: Status): string {
   const tracking = status.local.tracking;
   const cloud = status.github;
   const rows = [
-    ["Worktree branch", status.worktree.branch ?? "detached HEAD"],
+    ["Worktree branch", status.worktree.branch ?? "HEAD is not on a local branch"],
     ["Worktree", status.worktree.dirty ? "Uncommitted or untracked changes" : "Clean"],
     ["Monitored branch", status.local.ref],
     ["Local commit", status.local.commit ?? "Missing / no commits yet"],
