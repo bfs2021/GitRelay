@@ -8,6 +8,12 @@ import { readReceipt, sendMessage, sessionKey } from "../../src/core/mailbox.ts"
 import { repository } from "../../src/core/store.ts";
 import { fixture } from "../helpers.ts";
 
+test("pi rejects incomplete native identity instead of opening a legacy inbox", () => {
+  for (const getHeader of [undefined, () => null, () => ({ id: "native", timestamp: "invalid" })]) {
+    assert.throws(() => piIdentity({ getSessionId: () => "native", getSessionFile: () => undefined, getHeader } as any), /header/);
+  }
+});
+
 test("pi cannot deliver an old inbox to a different native history with the same ID", async (t) => {
   const f = await fixture(t), ref = "refs/heads/main";
   const managers = ["old", "new"].map((name) => {

@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -36,7 +38,7 @@ function host(root: string) {
     location: { directory: root },
     session: {
       async hook(_name: string, callback: typeof onPrompt) { onPrompt = callback; return { async dispose() {} }; },
-      async get() { return { location: { directory: root } }; },
+      async get() { return { location: { directory: root }, time: { created: 1 } }; },
       async prompt(value: { text?: string }) { prompts.push(value); },
     },
     event: { async *subscribe({ signal }: { signal: AbortSignal }) { await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true })); } },
@@ -51,7 +53,7 @@ test("OpenCode resumes a registered inbox after temporary Git initialization fai
   for (const name of ["sessions", "events", "receipts", "refs", "trash"]) await mkdir(join(target, name), { recursive: true });
   for (const name of ["identity-owner.json", "identity-ready.json"]) await writeFile(join(target, name), JSON.stringify({ id }));
   await writeFile(join(target, "refs", `${hash(ref)}.json`), JSON.stringify({ ref, commit }));
-  const native = { adapter: "opencode", session: "receiver" }, key = sessionKey({ root: f.repo }, native, ref), now = new Date().toISOString(), eventId = "b".repeat(64);
+  const native = { adapter: "opencode", session: "receiver", instance: hash([resolve(process.env.XDG_DATA_HOME || homedir()), 1]) }, key = sessionKey({ root: f.repo }, native, ref), now = new Date().toISOString(), eventId = "b".repeat(64);
   await writeFile(join(target, "sessions", `${key}.json`), JSON.stringify({ ...native, root: f.repo, ref, key, createdAt: now, lastSeen: now, baseline: commit, migrated: true }));
   await writeFile(join(target, "events", `${eventId}.json`), JSON.stringify({ id: eventId, kind: "message", createdAt: now, sender: { adapter: "cli", session: "sender", root: f.repo }, recipients: [key], text: "RECOVERY_MARKER", files: [] }));
   const bin = join(f.dir, "bin"), mode = join(f.dir, "mode"); await mkdir(bin); await writeFile(mode, "fail");
@@ -80,7 +82,7 @@ test("OpenCode registers after a non-Git directory becomes a repository", { skip
   const h = host(f.repo), cleanup = await plugin.setup(h.context); t.after(cleanup);
   await h.prompt("new"); assert.equal(warnings.length, 1);
   init(f.repo, f.template, git); monotonic += 5000; t.mock.timers.tick(5000);
-  const common = await realpath(join(f.repo, ".git")), key = sessionKey({ root: f.repo }, { adapter: "opencode", session: "new" }, "refs/heads/main");
+  const common = await realpath(join(f.repo, ".git")), key = sessionKey({ root: f.repo }, { adapter: "opencode", session: "new", instance: hash([resolve(process.env.XDG_DATA_HOME || homedir()), 1]) }, "refs/heads/main");
   await until(async () => {
     try {
       const identity = (await readFile(join(common, ".git-relay-id"), "utf8")).trim(), id = hash([common, identity]);

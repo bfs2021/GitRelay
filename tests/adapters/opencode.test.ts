@@ -405,7 +405,7 @@ for (const ending of ["error", "end"] as const) {
     const context = {
       location: { directory: f.b },
       session: {
-        get: async () => { lookups++; if (nativeDeleted) throw new Error("Session.NotFoundError"); return { location: { directory: f.b } }; },
+        get: async () => { lookups++; if (nativeDeleted) throw new Error("Session.NotFoundError"); return { location: { directory: f.b }, time: { created: 1 } }; },
         hook: async (_name: string, handler: typeof onPrompt) => { onPrompt = handler; return { dispose: async () => {} }; },
         prompt: async () => {},
       },
@@ -591,6 +591,19 @@ test("OpenCode v2 does not enroll child sessions or sessions in other directorie
   await f.enroll("foreign");
   assert.equal((await listSessions(f.b)).length, 0);
 });
+
+test("OpenCode rejects incomplete native identity and can retry with valid metadata", async (t) => {
+  const f = await harness(t, async () => { assert.fail("no pending messages"); });
+  const warnings: string[] = [];
+  t.mock.method(console, "warn", (message: unknown) => { warnings.push(String(message)); });
+  const mocked = t.mock.method(f.session, "get", async () => ({ location: { directory: f.b } }) as any);
+  await f.enroll();
+  assert.deepEqual(await listSessions(f.b), []);
+  assert.ok(warnings.some((message) => message.includes("creation time")));
+  mocked.mock.restore();
+  await f.enroll();
+  assert.equal((await listSessions(f.b)).length, 1);
+});
 test("OpenCode waits for an active scan when hook disposal fails", async (t) => {
   const started = Promise.withResolvers<void>();
   const release = Promise.withResolvers<void>();
@@ -631,7 +644,7 @@ for (const mode of ["sync", "async"] as const) {
     const context = {
       location: { directory: f.b },
       session: {
-        get: async () => ({ location: { directory: f.b } }),
+        get: async () => ({ location: { directory: f.b }, time: { created: 1 } }),
         hook: async (_name: string, handler: typeof onPrompt) => { onPrompt = handler; return { dispose: () => {
           if (mode === "sync") throw new Error("original disposal failure");
           return Promise.reject(new Error("original disposal failure"));
@@ -643,7 +656,7 @@ for (const mode of ["sync", "async"] as const) {
     t.mock.method(console, "warn", () => { warned.resolve(); throw new Error("reporter failure"); });
     const cleanup = await plugin.setup(context as unknown as Plugin.Context);
     const repo = await repository(f.b);
-    const id = "ses_shutdown", key = sessionKey(repo, { adapter: "opencode", session: id }, "refs/heads/main");
+    const id = "ses_shutdown", key = sessionKey(repo, { adapter: "opencode", session: id, instance: hash([resolve(process.env.XDG_DATA_HOME || homedir()), 1]) }, "refs/heads/main");
     try {
       await onPrompt({ sessionID: id });
       await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "held" });

@@ -56,8 +56,10 @@ export default {
     const deferred = new Error("Establish baseline without recursively prompting");
     const warn = (error: unknown) => { try { console.warn(`[GitRelay] ${error instanceof Error ? error.message : String(error)}`); } catch {} };
     const belongs = (session: Awaited<ReturnType<typeof ctx.session.get>>) => !session.parentID && session.location.directory === ctx.location.directory;
-    const instanceOf = (session: Awaited<ReturnType<typeof ctx.session.get>>) => session.time?.created === undefined ? undefined
-      : hash([resolve(process.env.XDG_DATA_HOME || homedir()), session.time.created]);
+    const instanceOf = (session: Awaited<ReturnType<typeof ctx.session.get>>) => {
+      if (!Number.isFinite(session.time?.created) || session.time.created < 0) throw new Error("OpenCode session creation time is missing or invalid; subscription preserved without delivery");
+      return hash([resolve(process.env.XDG_DATA_HOME || homedir()), session.time.created]);
+    };
 
     function getSession(id: SessionID, signal: AbortSignal, underlying?: (pending: ReturnType<typeof ctx.session.get>) => void): ReturnType<typeof ctx.session.get> {
       signal.throwIfAborted();

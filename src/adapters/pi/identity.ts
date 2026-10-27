@@ -7,8 +7,7 @@ import type { Identity } from "../../core/mailbox.ts";
 /** Bind a native history to its file and creation time, preserving identity on resume. */
 export function piIdentity(manager: Pick<ExtensionContext["sessionManager"], "getSessionId" | "getSessionFile"> & Partial<Pick<ExtensionContext["sessionManager"], "getHeader">>): Identity {
   const session = manager.getSessionId();
-  if (!manager.getHeader) return { adapter: "pi", session };
-  const header = manager.getHeader();
+  const header = manager.getHeader?.();
   if (!header || header.id !== session || !Number.isFinite(Date.parse(header.timestamp))) throw new Error("Pi session changed or its header does not identify the active session");
   const file = manager.getSessionFile();
   let path: string | null = null;

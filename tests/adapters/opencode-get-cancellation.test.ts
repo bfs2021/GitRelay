@@ -18,7 +18,7 @@ for (const phase of ["registration", "scan"] as const) {
       let hook!: (event: { sessionID: string }) => Promise<void>;
       let calls = 0;
       t.mock.method(console, "warn", () => {});
-      const session = { location: { directory: f.b } };
+      const session = { location: { directory: f.b }, time: { created: 1 } };
       const ctx = {
         location: { directory: f.b },
         session: {

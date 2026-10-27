@@ -51,7 +51,7 @@ async function fixture(t: TestContext, get: (input: { sessionID: string }) => Pr
     location: { directory: root },
     session: {
       async hook(_name: string, fn: typeof hook) { hook = fn; return { async dispose() {} }; },
-      get,
+      get: async (input: { sessionID: string }) => ({ ...await get(input), time: { created: 1 } }),
       async prompt() { throw new Error('Unexpected host prompt'); },
     },
     event: { async *subscribe({ signal }: { signal: AbortSignal }) {

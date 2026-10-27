@@ -19,7 +19,7 @@ test("failed reporting during a background scan does not reject the timer task",
     location: { directory: f.b },
     session: {
       async hook(_name: string, handler: typeof hook) { hook = handler; return { async dispose() {} }; },
-      async get() { if (++gets > 2) throw new Error("host query failed"); return { location: { directory: f.b } }; },
+      async get() { if (++gets > 2) throw new Error("host query failed"); return { location: { directory: f.b }, time: { created: 1 } }; },
     },
     event: { async *subscribe({ signal }: { signal: AbortSignal }) { if (!signal.aborted) await new Promise<void>((done) => signal.addEventListener("abort", () => done(), { once: true })); } },
   };

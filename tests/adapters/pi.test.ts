@@ -66,7 +66,7 @@ function harness(hasUI = true, cwd = process.cwd(), manager?: SessionManager) {
     cwd,
     isIdle: () => !busy,
     hasPendingMessages: () => false,
-    sessionManager: manager ?? { getSessionId: () => "pi-test", getSessionFile: () => undefined, getBranch: () => entries, getLeafId: () => entries.at(-1)?.id ?? null },
+    sessionManager: manager ?? { getSessionId: () => "pi-test", getHeader: () => ({ id: "pi-test", timestamp: "2026-01-01T00:00:00.000Z" }), getSessionFile: () => undefined, getBranch: () => entries, getLeafId: () => entries.at(-1)?.id ?? null },
     ui: {
       notify(message: string, type?: string) { notices.push({ message, type }); },
       async select(_title: string, options: string[]) {
@@ -78,7 +78,7 @@ function harness(hasUI = true, cwd = process.cwd(), manager?: SessionManager) {
     },
   } as unknown as ExtensionCommandContext;
   assert.ok(command);
-  return { run: (args: string) => command!.handler(args, ctx), notices, selections, inputs, messages, entries, confirmations, confirm() { confirmed = true; } };
+  return { manager: ctx.sessionManager, run: (args: string) => command!.handler(args, ctx), notices, selections, inputs, messages, entries, confirmations, confirm() { confirmed = true; } };
 }
 
 test("pi boolean CLI string false disables monitoring before accessing the worktree", async () => {
@@ -180,7 +180,7 @@ test("failed leave or join restores the active watcher", async (t) => {
   const f = await fixture(t);
   const ui = harness(true, f.b);
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session: "pi-test" }, "refs/heads/main");
+  const key = sessionKey(repo, piIdentity(ui.manager), "refs/heads/main");
   try {
     await ui.run("join");
     for (const action of ["leave", "join"]) {

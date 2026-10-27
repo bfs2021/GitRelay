@@ -1454,13 +1454,13 @@ test("pi never acknowledges or queues an old session's event after a session swi
   t.after(() => watcher.stop());
   await watcher.tick();
   const event = await sendMessage({ cwd: f.a, adapter: "test", session: "sender", text: "old-session" });
-  const session = manager.getSessionId();
+  const session = manager.getSessionId(), identity = piIdentity(manager);
   const original = manager.getSessionId.bind(manager);
   let calls = 0;
   manager.getSessionId = () => ++calls === 1 ? session : "other-session";
   await watcher.tick();
   const repo = await repository(f.b);
-  const key = sessionKey(repo, { adapter: "pi", session }, "refs/heads/main");
+  const key = sessionKey(repo, identity, "refs/heads/main");
   assert.equal(await readJson(join(repo.directory, "receipts", key, `${event.id}.json`)), undefined);
   assert.equal(sent, 0);
   assert.ok(warnings.some((message) => message.includes("session changed")));

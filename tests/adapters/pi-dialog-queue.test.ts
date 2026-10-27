@@ -43,7 +43,7 @@ function host(repo: string) {
   const handlers: Record<string,(event?: any,ctx?: any)=>Promise<void>>={},commands: Record<string,any>={},notices: unknown[][]=[];
   let session='old', selection: Promise<string> = Promise.resolve('');
   const pi={registerFlag(){},registerCommand(name:string,command:any){commands[name]=command},on(name:string,fn:any){handlers[name]=fn},getFlag(name:string){return name==='worktree-watch'?false:'refs/heads/main'},sendMessage(){throw Error('unexpected host message')}};
-  const ctx={mode:'tui',hasUI:true,cwd:repo,sessionManager:{getSessionId:()=>session,getSessionFile:()=>undefined,getBranch:()=>[],getEntries:()=>[],getLeafId:()=>null},isIdle:()=>true,hasPendingMessages:()=>false,ui:{notify(...args:unknown[]){notices.push(args)},select:()=>selection}};
+  const ctx={mode:'tui',hasUI:true,cwd:repo,sessionManager:{getSessionId:()=>session,getHeader:()=>({id:session,timestamp:'2026-01-01T00:00:00.000Z'}),getSessionFile:()=>undefined,getBranch:()=>[],getEntries:()=>[],getLeafId:()=>null},isIdle:()=>true,hasPendingMessages:()=>false,ui:{notify(...args:unknown[]){notices.push(args)},select:()=>selection}};
   extension(pi as any);return{handlers,commands,notices,ctx,setSession(value:string){session=value},setSelection(value:Promise<string>){selection=value}};
 }
 test('same session leave waits for a join already in progress', {skip:process.platform==='win32',timeout:30000},async(t)=>{
