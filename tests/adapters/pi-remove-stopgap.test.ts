@@ -18,14 +18,14 @@ test("replaced selection and SDK entry preserve the replacement worktree", { ski
   let command: { handler(args: string, ctx: any): Promise<void> };
   extension({ registerFlag() {}, getFlag() { return false; }, registerCommand(_name: string, value: typeof command) { command = value; }, on() {}, sendMessage() {} } as any);
   const notices: string[] = [];
-  const ctx: any = { hasUI: true, mode: "rpc", cwd: f.main, ui: {
+  const ctx: any = { hasUI: true, mode: "rpc", cwd: f.main, sessionManager: { getSessionId: () => "remove-check" }, ui: {
     async select(_title: string, options: string[]) { const selected = options.find((x) => x.startsWith(JSON.stringify(target))); assert.ok(selected); entered.resolve(); return release.promise; },
     async confirm() { assert.fail("automatic removal must not ask for destructive confirmation"); },
     notify(message: string) { notices.push(message); },
   } };
   assert.equal(await stat(join(f.main, "SHELL_INJECTION")).catch(() => undefined), undefined);
   const pending = command!.handler("remove", ctx);
-  await entered.promise;
+  await Promise.race([entered.promise, pending.then(() => { throw new Error("Worktree selection was not reached"); })]);
   const selected = `${JSON.stringify(target)} — confirm-before`;
   git("worktree", "remove", target);
   git("worktree", "add", "-b", "replacement", target);

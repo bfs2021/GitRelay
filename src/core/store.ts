@@ -218,10 +218,10 @@ export async function repository(cwd: string, signal?: AbortSignal): Promise<Rep
     const existing = await lstat(repo.directory).catch((error) => { if (error.code === "ENOENT") return undefined; throw error; });
     if (existing) {
       if (!existing.isDirectory()) throw new Error(`Invalid GitRelay state directory: ${repo.directory}`);
-      await checkRepositoryDirectories(repo.directory);
       const ready = await readJson(join(repo.directory, "identity-ready.json")) as { id?: string } | undefined;
       const owner = await readJson(join(repo.directory, "identity-owner.json")) as { id?: string } | undefined;
       if (ready?.id !== repo.id || owner?.id !== repo.id) throw new Error(`Incomplete GitRelay state initialization: ${repo.directory}; inspect and preserve it before recovery.`);
+      await checkRepositoryDirectories(repo.directory);
     } else {
       const prior = await priorRepositories(repo);
       const choice = await readJson(join(stateDirectory(), "identity-choices", `${repo.id}.json`)) as { id?: string } | undefined;

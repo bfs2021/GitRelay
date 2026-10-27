@@ -14,7 +14,7 @@ test("pi and OpenCode warn on invalid Git root bytes, create no watchers, and sh
   const previous = process.env.PATH; process.env.PATH = `${bin}:${previous ?? ""}`;
   const callbacks = new Map<string, (event: unknown, ctx: unknown) => Promise<void>>(), notices: string[] = [];
   piExtension({ registerFlag() {}, registerCommand() {}, getFlag() { return undefined; }, on(event: string, handler: (event: unknown, ctx: unknown) => Promise<void>) { callbacks.set(event, handler); return () => {}; } } as unknown as ExtensionAPI);
-  const ctx = { mode: "rpc", cwd: f.b, ui: { notify(message: string) { notices.push(message); } } };
+  const ctx = { mode: "rpc", cwd: f.b, sessionManager: { getSessionId: () => "invalid-path" }, ui: { notify(message: string) { notices.push(message); } } };
   const warnings: string[] = []; const mocked = t.mock.method(console, "warn", (...args: unknown[]) => { warnings.push(args.join(" ")); });
   try {
     await callbacks.get("session_start")!({}, ctx);
@@ -30,7 +30,7 @@ test("pi stays quiet and OpenCode warns outside Git, then both clean up", async 
   const f = await fixture(t), cwd = join(f.root, "non-git"); await mkdir(cwd);
   const callbacks = new Map<string, (event: unknown, ctx: unknown) => Promise<void>>(), notices: string[] = [];
   piExtension({ registerFlag() {}, registerCommand() {}, getFlag() { return undefined; }, on(event: string, handler: (event: unknown, ctx: unknown) => Promise<void>) { callbacks.set(event, handler); return () => {}; } } as unknown as ExtensionAPI);
-  const ctx = { mode: "rpc", cwd, ui: { notify(message: string) { notices.push(message); } } };
+  const ctx = { mode: "rpc", cwd, sessionManager: { getSessionId: () => "outside-git" }, ui: { notify(message: string) { notices.push(message); } } };
   const warnings: string[] = []; const mocked = t.mock.method(console, "warn", (...args: unknown[]) => { warnings.push(args.join(" ")); });
   try {
     await callbacks.get("session_start")!({}, ctx); await callbacks.get("session_shutdown")!({}, ctx);
