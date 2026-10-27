@@ -1,0 +1,90 @@
+{
+  "testedAtUtc": "2026-10-27T11:48:47.472871+00:00",
+  "sourceCommit": "43bc73695104e69cfa3c81bae5c81af3abab418e",
+  "environment": {
+    "platform": "macOS arm64",
+    "node": "22.23.2",
+    "git": "2.54.0 (Apple Git-157)",
+    "codex": "0.164.0",
+    "opencode": "2.1.2"
+  },
+  "localValidation": {
+    "command": "npm run check",
+    "exitCode": 0,
+    "tests": 523,
+    "passed": 508,
+    "failed": 0,
+    "skipped": 1,
+    "todo": 14,
+    "todoScope": "Automatic synchronization remains intentionally blocked",
+    "lostResponseRepeatPasses": 20,
+    "runtimeAstComparison": {
+      "files": 26,
+      "nonFormattingChanges": 0
+    }
+  },
+  "nativeValidation": {
+    "codex": {
+      "normalHookReviewAndTrust": true,
+      "defaultOffNewConversations": true,
+      "explicitSessionActivation": true,
+      "resumedActivation": true,
+      "messageModelMarkerObserved": true,
+      "upstreamPatchModelMarkerObserved": true,
+      "singlePersistedHookInjectionForFirstMessage": true,
+      "disableAndOrdinaryResumeRemainOff": true,
+      "uninstallReinstallPreservesState": true,
+      "offlineDeliveryAfterNormalRetrust": true,
+      "installedRuntimeMatchesBuild": true
+    },
+    "opencode": {
+      "realPluginActive": true,
+      "defaultOffTwoConversations": true,
+      "explicitSessionActivation": true,
+      "messageModelMarkerObserved": true,
+      "upstreamPatchInNativeContextAndReceipt": true,
+      "singleNativeAdmissionAfterFurtherPoll": true,
+      "busyQueueObserved": true,
+      "disableAndOrdinaryResumeRemainOff": true,
+      "sameInstanceRestart": true,
+      "recreatedNativeIdStartsOff": true,
+      "recreatedInstanceHasIndependentInbox": true,
+      "oldUnreadRetained": true,
+      "uninstallReinstallPreservesStateAndConfig": true,
+      "offlineReceiptRecovery": true,
+      "installedRuntimeMatchesBuild": true
+    },
+    "repositoryIsolation": {
+      "sameStateRootDifferentRepositories": true,
+      "foreignContextDoesNotReceiveSourceEvent": true
+    },
+    "cleanup": {
+      "syntheticSubscriptionsClosed": true,
+      "isolatedServerStopped": true,
+      "copiedCredentialFilesRemoved": true,
+      "importedOpenAIAccountRemovedFromIsolatedServer": true
+    }
+  },
+  "reproduction": {
+    "local": "npm ci --ignore-scripts --omit=optional && npm run check",
+    "nativeChecklist": "../../acceptance.md",
+    "benchmarks": [
+      "npm run build",
+      "node scripts/record-benchmark.mjs delivery /absolute/new-delivery.json",
+      "node scripts/record-benchmark.mjs mailbox /absolute/new-mailbox.json"
+    ]
+  },
+  "evidencePolicy": "Sanitized synthetic native traces. Fixture/source/executable paths are replaced with placeholders. Assistant reasoning and provider-native opaque payloads are omitted. Credentials and client configuration are not included.",
+  "limitations": [
+    "Targeted synthetic scenarios on these exact native client versions; no claim of complete production agent work.",
+    "Some lifecycle prompts use resume:false to test native admission without scheduling another model turn.",
+    "Codex uninstall/reinstall required normal hook re-trust; an earlier pre-trust resume retained the unread event.",
+    "Permanent host deduplication, forced termination, power loss, Windows, network filesystems and all host/Git failure modes were not established by this native run.",
+    "Benchmarks are single local runs with uncontrolled external load, not before/after performance claims."
+  ],
+  "artifacts": {
+    "delivery-benchmark.json": "6f6f206872bb2a01c40c45bfadce897e3343b1d3551a635012101d33db01910e",
+    "mailbox-benchmark.json": "05e8baa1e4ca9ff8131e298cda3e09ed855ea248347fd74fd43876282cb54fa9",
+    "native-traces.json": "47a895242d134ee9e54a003f8bfd975adf199608b0c5391970fcc2a2ace1459e"
+  }
+}

@@ -29,6 +29,27 @@ and state cache conditions, external load and unmeasured boundaries. This
 recorder does not recover missing historical harnesses or establish real-host
 latency, cold-cache behavior or physical disk I/O.
 
+## Current reproducible CLI baseline: 2026-10-27
+
+Two recorded runs used a clean checkout of implementation commit
+`43bc73695104e69cfa3c81bae5c81af3abab418e`, macOS arm64, Node `22.23.2` and
+Git `2.54.0`. The recorder verified unchanged source and build fingerprints.
+All benchmark delivery, receipt and deduplication assertions passed.
+
+- [CLI delivery record](evidence/2026-10-27-standardization/delivery-benchmark.json):
+  one sender/receiver in linked worktrees, warm caches and no daemon. The medians
+  were 52.1 ms send, 69.9 ms check and 121.1 ms send-through-check completion.
+- [Mailbox record](evidence/2026-10-27-standardization/mailbox-benchmark.json):
+  three sessions, 100/1,000/10,000 retained events and a 32-message offline backlog.
+  At 10,000 events without a daemon, three-session idle polling measured
+  1,660.4 ms and backlog recovery 2,144.5 ms.
+
+These are single local runs with uncontrolled external load. They are not an
+old/new comparison, a stable latency guarantee or real-client performance
+measurements. The JSON records retain workload details and raw benchmark output;
+the executable path is replaced with `<node>`. Historical experiments below
+remain separately scoped to their original sources and conditions.
+
 ## Per-ref daemon cache ownership (2026-10-27, Asia/Singapore)
 
 This is a historical measurement of the cache fast path; current consumers

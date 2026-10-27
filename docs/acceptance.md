@@ -33,7 +33,44 @@ npm pack --dry-run
 CI is configured for macOS/Linux on Node.js 22.19.0 and 24. A local pass does not
 establish hosted CI status or actual hook discovery/trust in a client.
 
-## Real-client acceptance still required for this refactor
+## Targeted native acceptance: 2026-10-27
+
+The on-demand flow was exercised on macOS arm64 with Codex `0.164.0` and
+OpenCode `2.1.2`, against implementation commit
+`43bc73695104e69cfa3c81bae5c81af3abab418e`. Both installed runtime copies matched
+the tested build byte-for-byte. The local `npm run check` passed: 508 tests
+passed, none failed, one was skipped and 14 remain TODO for disabled automatic
+synchronization. The lost-response regression also passed 20 consecutive runs.
+
+| Scenario                            | Evidence established                                                                                                                                                                                             |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ordinary prompts                    | New Codex conversations and two OpenCode conversations remained unregistered                                                                                                                                     |
+| Explicit activation                 | Only the selected native sessions subscribed; ordinary resumed prompts retained their saved choice                                                                                                               |
+| Shared message                      | Both real models reported the synthetic marker; native admission, hook injection and receipts were checked separately                                                                                            |
+| Upstream commit                     | A real Git commit reached both inboxes; Codex reported its patch marker and OpenCode's native context contained the patch; local dirty files were preserved                                                      |
+| Normal deduplication                | One persisted Codex hook injection and one OpenCode admission for the first event, including a later hook/poll                                                                                                   |
+| Busy OpenCode session               | The next event appeared in the durable native inbox while a model turn was active                                                                                                                                |
+| Disable                             | Native disable prompts closed subscriptions; broadcasts targeted zero recipients and ordinary resumed prompts stayed off                                                                                         |
+| Native identity                     | Restart resumed the same OpenCode instance; recreating its ID stayed off and explicit re-enrollment created an independent inbox                                                                                 |
+| Unread preservation                 | The old instance's unread event remained without a receipt while the new instance received into its own inbox                                                                                                    |
+| Reinstallation and offline delivery | Codex plugin removal/reinstallation retained state and recovered after normal hook re-trust; OpenCode uninstall/reinstall preserved configuration and unread state, then recovered into the same native instance |
+| Repository isolation                | An enabled session in a separate repository sharing the state root did not receive the source repository's event                                                                                                 |
+
+The [machine-readable summary](evidence/2026-10-27-standardization/summary.json)
+links sanitized native traces, runtime file hashes and the two committed
+benchmark records. Fixture/source paths are replaced with placeholders; model
+reasoning, opaque provider payloads, credentials and client configuration are
+not published. The isolated server was stopped, synthetic subscriptions were
+closed, and copied credentials were removed after verification.
+
+These are targeted synthetic scenarios, not complete production-work acceptance.
+Some identity/restart prompts used `resume: false` to verify native admission
+without scheduling another model turn. Hook trust was granted through the normal
+Codex interface, including again after plugin reinstallation; no trust-bypass
+flag was used. Native Git/host failure coverage is not exhaustive, and these
+results do not establish compatibility with every matching peer version.
+
+## Repeat for runtime changes
 
 In disposable repositories with isolated state and client configuration:
 
@@ -62,5 +99,5 @@ results do not verify the current source or the new default-off behavior.
 History remains available in Git; it is not a current support matrix.
 
 Forced termination, power-loss durability, permanent host deduplication, Windows
-client lifecycle, and complete real-model acceptance of this refactor are not
-established. See [platform boundaries](platform-matrix.md).
+client lifecycle and completed production agent work are not established by
+these targeted runs. See [platform boundaries](platform-matrix.md).

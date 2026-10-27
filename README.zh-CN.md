@@ -144,10 +144,14 @@ npm run check
 npm run benchmark
 ```
 
+按需启用流程已完成 Codex 0.164.0 与 OpenCode 2.1.2 的针对性真实客户端验收，
+具体场景和未验证边界见[验收记录](docs/acceptance.md#targeted-native-acceptance-2026-10-27)。
+版本与标签一致性检查见[源码发布流程](docs/releases.md)。
+
 `src/core/` 负责 Git、状态、会话和投递，`src/adapters/` 仅保留 Codex hooks 与
 OpenCode 插件，`src/cli/` 负责命令和安装。`dist/` 为不提交的构建产物。
 测试使用临时仓库和隔离状态，CI 覆盖 macOS/Linux、Node.js 22.19.0 和 24。
 
-本地回归、真实客户端及模型验收、远端 CI 分别记录。历史验收早于本次重构，不代表
-新的按需启用流程已通过真实客户端验收。详见[验收说明](docs/acceptance.md)、
+本地回归、真实客户端及模型验收、远端 CI 分别记录。历史验收早于本次重构，
+本次针对性验收的场景与边界见上方链接。另见[验收说明](docs/acceptance.md)、
 [性能记录](docs/performance.md)和[贡献指南](CONTRIBUTING.md)。

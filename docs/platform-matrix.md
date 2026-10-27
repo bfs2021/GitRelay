@@ -16,12 +16,18 @@ point does not activate any conversation.
 | Recreated native ID           | Depends on host session-ID uniqueness                           | Different native instance; separate inbox and activation                                       |
 | Installation                  | Managed user hooks, with separate `/hooks` trust; manual plugin | Managed global entry or manual project entry                                                   |
 | Historical real-host evidence | CLI 0.164.0 on earlier source snapshots                         | 2.1.2 on earlier source snapshots                                                              |
-| Current on-demand flow        | Local regression coverage; real-host acceptance pending         | Local regression coverage; real-host acceptance pending                                        |
+| Current on-demand flow        | Local regressions and targeted native acceptance on 0.164.0     | Local regressions and targeted native acceptance on 2.1.2                                      |
 
 The declared OpenCode peer range `^2.1.2` is a dependency constraint, not proof
 that every matching host is accepted. Minimum full-lifecycle compatibility is
 not established. The new activation behavior requires rebuilding and refreshing
 installed copies; source changes alone do not update clients.
+
+The [2026-10-27 acceptance record](acceptance.md#targeted-native-acceptance-2026-10-27)
+covers explicit opt-in/out, messages, real upstream commits, normal deduplication,
+busy OpenCode queueing, restart/identity isolation, offline recovery,
+reinstallation and separate-repository isolation. It does not establish every
+failure mode or completed production agent work.
 
 OpenCode deletion events stop in-process checks but do not automatically close
 persisted subscriptions. Verify the exact old instance before manual `leave`.

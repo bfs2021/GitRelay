@@ -8,6 +8,7 @@
 - Stabilize the OpenCode lost-response regression around independently persisted receipts.
 - Add formatting, unused-code and release-metadata checks to local validation and CI.
 - Document source-release checks and reproducible benchmark evidence.
+- Record targeted Codex/OpenCode native acceptance and source-fingerprinted CLI benchmarks.
 
 This section is not a published release. See [migration](docs/migration.md) for
 behavior changes and [acceptance](docs/acceptance.md) for verified boundaries.

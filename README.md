@@ -161,7 +161,10 @@ Codex hook handling and the OpenCode plugin; `src/cli/` contains commands and
 installation. `dist/` is generated and is not committed. Tests use disposable
 repositories and isolated state. CI checks macOS/Linux on Node.js 22.19.0 and 24.
 
-Local regressions, real-client/model acceptance, and hosted CI are separate
-checks. Historical evidence predates this refactor and does not verify the new
-activation flow. See [acceptance](docs/acceptance.md),
-[performance](docs/performance.md), and [contributing](CONTRIBUTING.md).
+Local regressions, real-client/model acceptance, and hosted CI are recorded
+separately. Historical evidence predates this refactor. Targeted native acceptance
+for the on-demand flow is recorded for Codex 0.164.0 and OpenCode 2.1.2; see its
+exact scenarios and limits in
+[acceptance](docs/acceptance.md#targeted-native-acceptance-2026-10-27).
+See [performance](docs/performance.md), [contributing](CONTRIBUTING.md), and
+[source releases](docs/releases.md) for benchmarks, checks and version/tag rules.
