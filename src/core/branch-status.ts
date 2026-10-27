@@ -14,11 +14,18 @@ export interface BranchStatusOptions {
 }
 
 export function validateGitHubRepository(repo: string): void {
-  if (!/^(?:[a-zA-Z0-9][a-zA-Z0-9.-]*\/)?[a-zA-Z0-9][a-zA-Z0-9_.-]*\/[a-zA-Z0-9_.-]+$/.test(repo))
+  if (!/^(?:[a-zA-Z0-9][a-zA-Z0-9.-]*(?::[0-9]{1,5})?\/)?[a-zA-Z0-9][a-zA-Z0-9_.-]*\/[a-zA-Z0-9_.-]+$/.test(repo))
     throw new Error("--repo must be [HOST/]OWNER/REPO.");
+  if (repo.split("/").length === 3) {
+    try {
+      new URL(`https://${repo.split("/")[0]}`);
+    } catch {
+      throw new Error("--repo must be [HOST/]OWNER/REPO.");
+    }
+  }
 }
 
-async function gh(cwd: string, args: string[], signal?: AbortSignal): Promise<unknown> {
+async function gh(cwd: string, args: string[], signal?: AbortSignal, host?: string): Promise<unknown> {
   signal?.throwIfAborted();
   try {
     const { stdout } = await exec("gh", args, {
@@ -26,7 +33,7 @@ async function gh(cwd: string, args: string[], signal?: AbortSignal): Promise<un
       signal,
       timeout: 30_000,
       maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, GH_PROMPT_DISABLED: "1", GH_PAGER: "cat" },
+      env: { ...process.env, GH_PROMPT_DISABLED: "1", GH_PAGER: "cat", ...(host ? { GH_HOST: host } : {}) },
       encoding: "utf8",
     });
     return JSON.parse(stdout);
@@ -149,8 +156,7 @@ export async function branchStatus(options: BranchStatusOptions) {
         cwd,
         [
           "api",
-          "--hostname",
-          url.hostname,
+          ...(url.port ? [] : ["--hostname", url.hostname]),
           "--method",
           "GET",
           "--paginate",
@@ -158,6 +164,7 @@ export async function branchStatus(options: BranchStatusOptions) {
           `repos/${repo.nameWithOwner}/git/matching-refs/heads/${encodeURIComponent(branch)}`,
         ],
         signal,
+        url.port ? url.host : undefined,
       );
       if (!Array.isArray(pages) || !pages.every(Array.isArray)) throw new Error("Invalid GitHub references response.");
       const refs = pages.flat();
