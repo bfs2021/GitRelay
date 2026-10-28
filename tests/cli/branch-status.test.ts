@@ -212,6 +212,10 @@ test("status escapes control characters without changing JSON branch names", asy
   const markdown = (await run("status", "--cwd", f.b, "--format", "markdown")).stdout;
   assert.doesNotMatch(markdown, /[\x7f-\x9f]/);
   assert.match(markdown, /x 2J/);
+  await assert.rejects(run("status", "--cwd", f.b, "--branch", "x\u001b[2J"), (error: Error & { stderr?: string }) => {
+    assert.doesNotMatch(error.stderr!, /\u001b/);
+    return true;
+  });
 });
 
 test(

@@ -57,7 +57,7 @@ function reportDiagnostic(message: string): void {
     low = message.charCodeAt(4096);
   const end = high >= 0xd800 && high <= 0xdbff && low >= 0xdc00 && low <= 0xdfff ? 4095 : 4096;
   const bounded = (message.length > 4096 ? `${message.slice(0, end)} [diagnostic truncated]` : message).replace(
-    /[\x7f-\x9f]/g,
+    /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g,
     " ",
   );
   try {
