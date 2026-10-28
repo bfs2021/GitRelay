@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatBranchStatus, sanitizeControlCharacters } from "../../src/core/status-format.ts";
+import { formatBranchStatus } from "../../src/core/status-format.ts";
 
 test("Markdown status escapes entity-like text and angle brackets", () => {
   const rendered = formatBranchStatus({
@@ -25,12 +25,4 @@ test("Markdown status strips C1 control characters", () => {
     assert.doesNotMatch(line, /[\x00-\x1f\x7f-\x9f]/);
   assert.match(rendered, /\| Worktree branch \| x 2J \|/);
   assert.match(rendered, /\| Monitored branch \| refs\/heads\/x 2J \|/);
-});
-
-test("JSON snapshots strip C1 control characters", () => {
-  const encoded = JSON.stringify(
-    sanitizeControlCharacters({ worktree: { branch: "x\u009b2J" }, local: { ref: "refs/heads/x\u009b2J" } }),
-  );
-  assert.doesNotMatch(encoded, /[\x00-\x1f\x7f-\x9f]/);
-  assert.match(encoded, /x 2J/);
 });

@@ -3,18 +3,9 @@ import type { SyncResult } from "./branch-sync.ts";
 
 type Status = Awaited<ReturnType<typeof branchStatus>> & { sync?: SyncResult };
 
-const controlCharacters = /[\x00-\x1f\x7f-\x9f]/g;
-
-export function sanitizeControlCharacters<T>(value: T): T {
-  if (typeof value === "string") return value.replace(controlCharacters, " ") as T;
-  if (Array.isArray(value)) return value.map((item) => sanitizeControlCharacters(item)) as T;
-  if (value !== null && typeof value === "object")
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeControlCharacters(item)])) as T;
-  return value;
-}
-
 const cell = (value: string) =>
-  sanitizeControlCharacters(value)
+  value
+    .replace(/[\x00-\x1f\x7f-\x9f]/g, " ")
     .replace(/[\\`*_[\]|]/g, "\\$&")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
