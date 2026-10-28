@@ -20,7 +20,7 @@ import { syncBranch } from "../core/branch-sync.ts";
 import { git, gitRefLine } from "../core/git.ts";
 import { writeFile } from "node:fs/promises";
 import { writeSync } from "node:fs";
-import { formatBranchStatus } from "../core/status-format.ts";
+import { formatBranchStatus, sanitizeControlCharacters } from "../core/status-format.ts";
 import { install } from "./install.ts";
 import {
   chooseFreshRepository,
@@ -266,10 +266,10 @@ async function main() {
       if (!branchValidated) branchValidated = await validateWatchRef(`refs/heads/${values.branch}`);
       try {
         const sync = values["auto-sync"] ? await syncBranch(cwd, branch!, abort.signal) : undefined;
-        const snapshot = {
+        const snapshot = sanitizeControlCharacters({
           ...(await branchStatus({ cwd, branch, github: values.github, repo: values.repo, signal: abort.signal })),
           ...(sync ? { sync } : {}),
-        };
+        });
         const encoded = JSON.stringify(snapshot);
         if (encoded !== previous) {
           const rendered = values.format === "markdown" ? formatBranchStatus(snapshot) : snapshot;
